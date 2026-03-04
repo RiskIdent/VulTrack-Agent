@@ -14,14 +14,16 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
         with:
           fetch-depth: 0  # Fetch all history for git describe
+          persist-credentials: false
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff  # v5.6.0
         with:
           go-version: '1.21'
+          cache: false
 
       - name: Extract version from tag
         id: version
@@ -43,10 +45,10 @@ jobs:
 
           BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
           echo "Build time: ${BUILD_TIME}"
-          echo "Version: ${{ steps.version.outputs.version }}"
+          echo "Version: ${VERSION}"
 
           GOARCH=amd64 GOOS=linux CGO_ENABLED=0 go build \
-            -ldflags "-s -w -X 'main.version=${{ steps.version.outputs.version }}' -X 'main.buildTime=${BUILD_TIME}'" \
+            -ldflags "-s -w -X 'main.version=${VERSION}' -X 'main.buildTime=${BUILD_TIME}'" \
             -o vultrack-agent-amd64 \
             ./cmd/vultrack-agent
 
@@ -60,17 +62,19 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y dpkg-dev
 
-          VERSION=${{ steps.version.outputs.version }} ARCH=amd64 ./build.sh deb
+          ./build.sh deb
 
       - name: Generate SHA256 checksums
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           mkdir -p release-files
           cp vultrack-agent-amd64 release-files/
-          cp dist/vultrack-agent_${{ steps.version.outputs.version }}_amd64.deb release-files/
+          cp dist/vultrack-agent_${VERSION}_amd64.deb release-files/
 
           cd release-files
           sha256sum vultrack-agent-amd64 \
-            vultrack-agent_${{ steps.version.outputs.version }}_amd64.deb \
+            vultrack-agent_${VERSION}_amd64.deb \
             > SHA256SUMS
 
           echo "Release files with checksums:"
@@ -79,7 +83,7 @@ jobs:
           cat SHA256SUMS
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b  # v2.5.0
         with:
           files: release-files/*
           tag_name: ${{ github.ref_name }}
