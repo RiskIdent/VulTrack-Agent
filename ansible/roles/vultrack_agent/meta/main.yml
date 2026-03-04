@@ -1,0 +1,20 @@
+---
+galaxy_info:
+  role_name: vultrack_agent
+  author: RiskIdent
+  description: Deploy and configure the VulTrack Agent
+  license: MIT
+  min_ansible_version: "2.12"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - focal
+        - jammy
+        - noble
+  galaxy_tags:
+    - security
+    - vulnerability
+    - monitoring
+    - agent
+
+dependencies: []

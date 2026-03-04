@@ -1,0 +1,29 @@
+# VulTrack Agent Configuration
+# This file should be placed at /etc/vultrack-agent/config.yaml
+
+# VulTrack server URL (required)
+server_url: https://vultrack.example.com
+
+# Enrollment key for initial registration (required for enroll command)
+# This can also be provided via --enrollment-key flag
+enrollment_key: ""
+
+# Path to store the agent token (default: /etc/vultrack-agent/token)
+token_file: /etc/vultrack-agent/token
+
+# How often to send reports in daemon mode (default: 1h)
+# Examples: 30m, 1h, 2h, 24h
+report_interval: 1h
+
+# Log level: debug, info, warn, error (default: info)
+log_level: info
+
+# Path to log file (empty = stdout)
+log_file: ""
+
+# Skip TLS certificate verification (default: false)
+# WARNING: Only use for testing!
+insecure: false
+
+# Path to custom CA certificate file (optional)
+# ca_cert: /etc/ssl/certs/custom-ca.crt

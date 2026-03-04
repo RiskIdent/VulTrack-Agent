@@ -1,0 +1,117 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'  # Triggers on version tags like v1.0.0
+
+jobs:
+  build-and-release:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history for git describe
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+
+      - name: Download dependencies
+        run: |
+          go mod download
+          go mod verify
+
+      - name: Build binary
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          echo "Building for architecture: amd64"
+
+          BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          echo "Build time: ${BUILD_TIME}"
+          echo "Version: ${{ steps.version.outputs.version }}"
+
+          GOARCH=amd64 GOOS=linux CGO_ENABLED=0 go build \
+            -ldflags "-s -w -X 'main.version=${{ steps.version.outputs.version }}' -X 'main.buildTime=${BUILD_TIME}'" \
+            -o vultrack-agent-amd64 \
+            ./cmd/vultrack-agent
+
+          ls -lh vultrack-agent-amd64
+
+      - name: Build Debian package
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          ARCH: amd64
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y dpkg-dev
+
+          VERSION=${{ steps.version.outputs.version }} ARCH=amd64 ./build.sh deb
+
+      - name: Generate SHA256 checksums
+        run: |
+          mkdir -p release-files
+          cp vultrack-agent-amd64 release-files/
+          cp dist/vultrack-agent_${{ steps.version.outputs.version }}_amd64.deb release-files/
+
+          cd release-files
+          sha256sum vultrack-agent-amd64 \
+            vultrack-agent_${{ steps.version.outputs.version }}_amd64.deb \
+            > SHA256SUMS
+
+          echo "Release files with checksums:"
+          ls -lh
+          echo ""
+          cat SHA256SUMS
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: release-files/*
+          tag_name: ${{ github.ref_name }}
+          name: Release ${{ steps.version.outputs.version }}
+          body: |
+            ## VulTrack Agent ${{ steps.version.outputs.version }}
+
+            ### Binary
+            - `vultrack-agent-amd64` - Static binary for Linux amd64
+
+            ### Debian Package
+            - `vultrack-agent_${{ steps.version.outputs.version }}_amd64.deb` - Debian package for amd64
+
+            ### Checksums
+            Verify integrity with `SHA256SUMS` (included in release assets):
+            ```bash
+            sha256sum -c SHA256SUMS
+            ```
+
+            ### Installation
+
+            **Binary:**
+            ```bash
+            chmod +x vultrack-agent-amd64
+            sudo mv vultrack-agent-amd64 /usr/local/bin/vultrack-agent
+            ```
+
+            **Debian Package:**
+            ```bash
+            sudo dpkg -i vultrack-agent_${{ steps.version.outputs.version }}_amd64.deb
+            ```
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

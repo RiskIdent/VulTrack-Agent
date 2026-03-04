@@ -1,0 +1,34 @@
+---
+# Version des vultrack-agent die installiert werden soll
+vultrack_agent_version: "1.0.0"
+
+# Installationsmethode: "deb" oder "binary"
+vultrack_agent_install_method: "deb"
+
+# VulTrack Server URL (pflicht)
+vultrack_agent_server_url: ""
+
+# Enrollment
+vultrack_agent_enroll: false
+vultrack_agent_enrollment_key: ""
+
+# Konfiguration
+vultrack_agent_token_file: "/etc/vultrack-agent/token"
+vultrack_agent_report_interval: "1h"
+vultrack_agent_log_level: "info"
+vultrack_agent_log_file: ""
+vultrack_agent_insecure: false
+vultrack_agent_ca_cert: ""
+
+# Service-Management
+vultrack_agent_service_state: "started"
+vultrack_agent_service_enabled: true
+
+# GitHub Server und Repository
+vultrack_agent_github_url: "https://github.com"
+vultrack_agent_github_repo: "RiskIdent/VulTrack-Agent"
+
+# Installationspfade
+vultrack_agent_bin_path: "/usr/local/bin/vultrack-agent"
+vultrack_agent_config_dir: "/etc/vultrack-agent"
+vultrack_agent_config_file: "/etc/vultrack-agent/config.yaml"

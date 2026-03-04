@@ -1,0 +1,7 @@
+---
+- name: Restart vultrack-agent
+  ansible.builtin.systemd:
+    name: vultrack-agent
+    state: restarted
+    daemon_reload: true
+  when: vultrack_agent_service_state != "stopped"

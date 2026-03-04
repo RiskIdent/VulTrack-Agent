@@ -1,0 +1,34 @@
+---
+- name: Check if vultrack-agent is already installed
+  ansible.builtin.stat:
+    path: "{{ vultrack_agent_bin_path }}"
+  register: _vultrack_agent_binary
+
+- name: Check installed version
+  ansible.builtin.command:
+    cmd: "{{ vultrack_agent_bin_path }} version"
+  register: _vultrack_agent_installed_version
+  changed_when: false
+  failed_when: false
+  when: _vultrack_agent_binary.stat.exists
+
+- name: Download vultrack-agent binary
+  ansible.builtin.get_url:
+    url: "{{ vultrack_agent_github_url }}/{{ vultrack_agent_github_repo }}/releases/download/v{{ vultrack_agent_version }}/vultrack-agent-{{ _vultrack_agent_arch }}"
+    dest: "{{ vultrack_agent_bin_path }}"
+    mode: "0755"
+    owner: root
+    group: root
+  when: >-
+    not _vultrack_agent_binary.stat.exists or
+    vultrack_agent_version not in (_vultrack_agent_installed_version.stdout | default(''))
+  notify: Restart vultrack-agent
+
+- name: Deploy systemd service file
+  ansible.builtin.template:
+    src: vultrack-agent.service.j2
+    dest: /etc/systemd/system/vultrack-agent.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart vultrack-agent

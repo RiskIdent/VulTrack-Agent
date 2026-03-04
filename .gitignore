@@ -1,0 +1,30 @@
+# Binaries (but not the cmd/vultrack-agent directory)
+/vultrack-agent
+vultrack-agent-*
+*.deb
+
+# Build directories
+dist/
+
+# Build artifacts
+*.test
+*.out
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test/export files
+export.json
+*.json.bak
+
+# Temporary files
+*.tmp
+*.log

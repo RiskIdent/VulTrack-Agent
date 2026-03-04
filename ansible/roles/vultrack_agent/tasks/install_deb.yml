@@ -1,0 +1,28 @@
+---
+- name: Remove stale download file
+  ansible.builtin.file:
+    path: "/tmp/vultrack-agent_{{ vultrack_agent_version }}_{{ _vultrack_agent_arch }}.deb"
+    state: absent
+
+- name: Download vultrack-agent Debian package
+  ansible.builtin.get_url:
+    url: "{{ vultrack_agent_github_url }}/{{ vultrack_agent_github_repo }}/releases/download/v{{ vultrack_agent_version }}/vultrack-agent_{{ vultrack_agent_version }}_{{ _vultrack_agent_arch }}.deb"
+    dest: "/tmp/vultrack-agent_{{ vultrack_agent_version }}_{{ _vultrack_agent_arch }}.deb"
+    mode: "0644"
+
+- name: Verify downloaded file
+  ansible.builtin.command:
+    cmd: "file /tmp/vultrack-agent_{{ vultrack_agent_version }}_{{ _vultrack_agent_arch }}.deb"
+  register: _vultrack_agent_file_type
+  changed_when: false
+  failed_when: "'Debian binary package' not in _vultrack_agent_file_type.stdout"
+
+- name: Install vultrack-agent Debian package
+  ansible.builtin.apt:
+    deb: "/tmp/vultrack-agent_{{ vultrack_agent_version }}_{{ _vultrack_agent_arch }}.deb"
+    state: present
+
+- name: Clean up downloaded package
+  ansible.builtin.file:
+    path: "/tmp/vultrack-agent_{{ vultrack_agent_version }}_{{ _vultrack_agent_arch }}.deb"
+    state: absent

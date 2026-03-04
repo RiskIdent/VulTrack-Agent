@@ -1,0 +1,27 @@
+# {{ ansible_managed }}
+# VulTrack Agent Configuration
+
+# VulTrack server URL
+server_url: "{{ vultrack_agent_server_url }}"
+
+# Path to store the agent token
+token_file: "{{ vultrack_agent_token_file }}"
+
+# How often to send reports in daemon mode
+report_interval: "{{ vultrack_agent_report_interval }}"
+
+# Log level: debug, info, warn, error
+log_level: "{{ vultrack_agent_log_level }}"
+{% if vultrack_agent_log_file %}
+
+# Path to log file
+log_file: "{{ vultrack_agent_log_file }}"
+{% endif %}
+
+# Skip TLS certificate verification
+insecure: {{ vultrack_agent_insecure | bool | lower }}
+{% if vultrack_agent_ca_cert %}
+
+# Path to custom CA certificate file
+ca_cert: "{{ vultrack_agent_ca_cert }}"
+{% endif %}
