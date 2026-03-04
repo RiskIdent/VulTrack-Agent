@@ -5,6 +5,8 @@ then reports them to a VulTrack vulnerability management server.
 
 VulTrack Agent was **developed with AI assisted coding**. Be aware there might be dragons.
 
+The VulTrack Server can be found in [this repository](https://github.com/RiskIdent/VulTrack).
+
 ## Features
 
 - **Static Binary**: No external runtime dependencies, easy deployment
