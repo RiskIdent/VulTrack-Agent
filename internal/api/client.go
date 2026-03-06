@@ -269,6 +269,14 @@ func (c *Client) StoreTokens(accessToken string, expiresIn int, refreshToken str
 	return nil
 }
 
+// InvalidateAccessToken clears the in-memory access token, forcing
+// EnsureValidToken to perform a real refresh on the next call.
+// Call this when the server rejects the current token with 401.
+func (c *Client) InvalidateAccessToken() {
+	c.accessToken = ""
+	c.accessTokenExp = time.Time{}
+}
+
 // HasRefreshToken reports whether the refresh token file exists on disk.
 func (c *Client) HasRefreshToken() bool {
 	_, err := os.Stat(c.refreshTokenFile)

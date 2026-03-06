@@ -66,15 +66,27 @@
   notify: Restart vultrack-agent
 
 - name: Enroll agent with VulTrack server
-  ansible.builtin.command:
-    argv:
-      - "{{ vultrack_agent_bin_path }}"
-      - enroll
-      - --enrollment-key
-      - "{{ vultrack_agent_enrollment_key }}"
-    creates: "{{ vultrack_agent_refresh_token_file }}"
+  block:
+    - name: Enroll agent (initial)
+      ansible.builtin.command:
+        argv:
+          - "{{ vultrack_agent_bin_path }}"
+          - enroll
+          - --enrollment-key
+          - "{{ vultrack_agent_enrollment_key }}"
+        creates: "{{ vultrack_agent_refresh_token_file }}"
+      no_log: true
+  rescue:
+    - name: Re-enroll agent with --force (hostname already registered, token file missing)
+      ansible.builtin.command:
+        argv:
+          - "{{ vultrack_agent_bin_path }}"
+          - enroll
+          - --enrollment-key
+          - "{{ vultrack_agent_enrollment_key }}"
+          - --force
+      no_log: true
   when: vultrack_agent_enroll | bool
-  no_log: true
 
 - name: Ensure refresh token file has correct permissions
   ansible.builtin.file:

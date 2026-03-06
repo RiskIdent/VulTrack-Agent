@@ -187,7 +187,9 @@ func runReport(cmd *cobra.Command, args []string) error {
 	resp, err := sendReport(client, sysInfo, packages)
 	if err != nil {
 		if apiErr, ok := err.(*api.APIError); ok && apiErr.StatusCode == 401 {
-			// Access token expired mid-cycle — refresh and retry once
+			// Server rejected the token (e.g. after backend restart) — force a
+			// real refresh by clearing the in-memory token before retrying.
+			client.InvalidateAccessToken()
 			if rfErr := client.EnsureValidToken(sysInfo.Hostname); rfErr != nil {
 				return fmt.Errorf("token refresh failed: %w", rfErr)
 			}
@@ -352,7 +354,9 @@ func runReportCycle(client *api.Client) error {
 	resp, err := sendReport(client, sysInfo, packages)
 	if err != nil {
 		if apiErr, ok := err.(*api.APIError); ok && apiErr.StatusCode == 401 {
-			// Access token expired mid-cycle — refresh and retry once
+			// Server rejected the token (e.g. after backend restart) — force a
+			// real refresh by clearing the in-memory token before retrying.
+			client.InvalidateAccessToken()
 			if rfErr := client.EnsureValidToken(sysInfo.Hostname); rfErr != nil {
 				return fmt.Errorf("token refresh failed: %w", rfErr)
 			}
