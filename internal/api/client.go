@@ -8,13 +8,14 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"time"
 )
 
 // Client handles communication with the VulTrack server
 type Client struct {
-	baseURL    string
+	baseURL    *url.URL
 	httpClient *http.Client
 }
 
@@ -71,6 +72,11 @@ func (e *APIError) Error() string {
 
 // NewClient creates a new API client
 func NewClient(baseURL string, insecure bool, caCertPath string) (*Client, error) {
+	parsedURL, err := url.Parse(baseURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid server URL: %w", err)
+	}
+
 	transport := &http.Transport{
 		TLSClientConfig: &tls.Config{
 			InsecureSkipVerify: insecure,
@@ -97,7 +103,7 @@ func NewClient(baseURL string, insecure bool, caCertPath string) (*Client, error
 	}
 
 	return &Client{
-		baseURL:    baseURL,
+		baseURL:    parsedURL,
 		httpClient: client,
 	}, nil
 }
@@ -113,8 +119,8 @@ func (c *Client) Enroll(hostname, enrollmentKey string) (*EnrollmentResponse, er
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	url := c.baseURL + "/api/v1/agent/enroll"
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	reqURL := c.baseURL.JoinPath("/api/v1/agent/enroll")
+	req, err := http.NewRequest("POST", reqURL.String(), bytes.NewBuffer(jsonData))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -138,8 +144,8 @@ func (c *Client) Report(token string, report *ReportRequest) (*ReportResponse, e
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	url := c.baseURL + "/api/v1/agent/report"
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
+	reqURL := c.baseURL.JoinPath("/api/v1/agent/report")
+	req, err := http.NewRequest("POST", reqURL.String(), bytes.NewBuffer(jsonData))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}

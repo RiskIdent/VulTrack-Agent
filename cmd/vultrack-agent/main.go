@@ -64,6 +64,9 @@ func init() {
 		if flagCACert != "" {
 			flagOverrides["ca_cert"] = flagCACert
 		}
+		if insecureFlag {
+			flagOverrides["insecure"] = "true"
+		}
 		return nil
 	}
 
@@ -93,11 +96,6 @@ func runEnroll(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	// Override insecure flag if set
-	if insecureFlag {
-		cfg.Insecure = true
-	}
-
 	// Override enrollment key from flag if provided
 	if enrollmentKeyFlag != "" {
 		cfg.EnrollmentKey = enrollmentKeyFlag
@@ -107,9 +105,6 @@ func runEnroll(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("enrollment_key is required (use --enrollment-key flag or set in config)")
 	}
 
-	if err := cfg.Validate(); err != nil {
-		return fmt.Errorf("invalid config: %w", err)
-	}
 
 	// Collect system info for hostname
 	sysInfo, err := collector.CollectSystemInfo()
@@ -166,14 +161,6 @@ func runReport(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	// Override insecure flag if set
-	if insecureFlag {
-		cfg.Insecure = true
-	}
-
-	if err := cfg.Validate(); err != nil {
-		return fmt.Errorf("invalid config: %w", err)
-	}
 
 	// Read token
 	token, err := readToken(cfg.TokenFile)
@@ -262,16 +249,6 @@ func init() {
 }
 
 func runExport(cmd *cobra.Command, args []string) error {
-	cfg, err := config.LoadConfig(configPath, flagOverrides)
-	if err != nil {
-		return fmt.Errorf("failed to load config: %w", err)
-	}
-
-	// Override insecure flag if set
-	if insecureFlag {
-		cfg.Insecure = true
-	}
-
 	// Collect data
 	logInfo("Collecting system information...")
 	sysInfo, err := collector.CollectSystemInfo()
@@ -345,14 +322,6 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	// Override insecure flag if set
-	if insecureFlag {
-		cfg.Insecure = true
-	}
-
-	if err := cfg.Validate(); err != nil {
-		return fmt.Errorf("invalid config: %w", err)
-	}
 
 	// Read token
 	token, err := readToken(cfg.TokenFile)
@@ -462,11 +431,6 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	cfg, err := config.LoadConfig(configPath, flagOverrides)
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
-	}
-
-	// Override insecure flag if set
-	if insecureFlag {
-		cfg.Insecure = true
 	}
 
 	fmt.Println("=== VulTrack Agent Status ===")

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v4"
 )
 
 // Config holds all configuration for the agent
@@ -33,7 +33,8 @@ func DefaultConfig() *Config {
 	}
 }
 
-// LoadConfig loads configuration from file, environment variables, and applies overrides
+// LoadConfig loads configuration from file, environment variables, and applies
+// overrides, then validates the result.
 func LoadConfig(configPath string, overrides map[string]string) (*Config, error) {
 	cfg := DefaultConfig()
 
@@ -71,7 +72,7 @@ func LoadConfig(configPath string, overrides map[string]string) (*Config, error)
 		}
 	}
 
-	return cfg, nil
+	return cfg, cfg.Validate()
 }
 
 // LoadFromFile loads configuration from a YAML file

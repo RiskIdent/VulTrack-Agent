@@ -32,37 +32,33 @@ func collectDPKGPackages() ([]Package, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to query dpkg packages: %w", err)
 	}
+	return parseDPKGOutput(string(output)), nil
+}
 
+func parseDPKGOutput(output string) []Package {
 	var packages []Package
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-	for _, line := range lines {
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
-
 		fields := strings.Split(line, "\t")
 		if len(fields) < 3 {
 			continue
 		}
-
 		pkg := Package{
 			Name:    fields[0],
 			Version: fields[1],
 			Arch:    fields[2],
 		}
-
-		// Source package (may be empty)
 		if len(fields) > 3 && fields[3] != "" {
 			pkg.Source = fields[3]
 		} else {
 			pkg.Source = pkg.Name
 		}
-
 		packages = append(packages, pkg)
 	}
-
-	return packages, nil
+	return packages
 }
 
 func collectRPMPackages() ([]Package, error) {
@@ -73,34 +69,31 @@ func collectRPMPackages() ([]Package, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to query rpm packages: %w", err)
 	}
+	return parseRPMOutput(string(output)), nil
+}
 
+func parseRPMOutput(output string) []Package {
 	var packages []Package
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-	for _, line := range lines {
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
-
 		fields := strings.Split(line, "\t")
 		if len(fields) < 3 {
 			continue
 		}
-
 		pkg := Package{
 			Name:    fields[0],
 			Version: fields[1],
 			Arch:    fields[2],
 		}
-
 		if len(fields) > 3 && fields[3] != "" && fields[3] != "(none)" {
 			pkg.Source = fields[3]
 		} else {
 			pkg.Source = pkg.Name
 		}
-
 		packages = append(packages, pkg)
 	}
-
-	return packages, nil
+	return packages
 }

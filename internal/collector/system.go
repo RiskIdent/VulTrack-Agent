@@ -2,6 +2,7 @@ package collector
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"regexp"
@@ -71,32 +72,23 @@ func CollectSystemInfo() (*SystemInfo, error) {
 }
 
 func getHostname() (string, error) {
-	// Try hostname -f first (FQDN)
-	cmd := exec.Command("hostname", "-f")
-	output, err := cmd.Output()
-	if err == nil {
-		hostname := strings.TrimSpace(string(output))
-		if hostname != "" {
-			return hostname, nil
-		}
-	}
-
-	// Fallback to /etc/hostname
-	data, err := os.ReadFile("/etc/hostname")
-	if err == nil {
-		hostname := strings.TrimSpace(string(data))
-		if hostname != "" {
-			return hostname, nil
-		}
-	}
-
-	// Last resort: uname -n
-	cmd = exec.Command("uname", "-n")
-	output, err = cmd.Output()
+	hostname, err := os.Hostname()
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(string(output)), nil
+
+	// Attempt to resolve the FQDN via reverse DNS lookup (equivalent to hostname -f).
+	// Falls back to the short hostname if DNS is unavailable or returns no results.
+	addrs, err := net.LookupHost(hostname)
+	if err != nil || len(addrs) == 0 {
+		return hostname, nil
+	}
+	fqdns, err := net.LookupAddr(addrs[0])
+	if err != nil || len(fqdns) == 0 {
+		return hostname, nil
+	}
+	// LookupAddr returns names with a trailing dot
+	return strings.TrimSuffix(fqdns[0], "."), nil
 }
 
 func getOSInfo() (family, release, codename string, err error) {
