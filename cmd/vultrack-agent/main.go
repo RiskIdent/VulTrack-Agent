@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"os/user"
-	"strconv"
 	"syscall"
 	"time"
 
@@ -134,15 +132,6 @@ func runEnroll(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to save token: %w", err)
 	}
 
-	// Transfer token ownership to the service user (vultrack-agent) if it exists,
-	// so the daemon can read the token without running as root.
-	if u, err := user.Lookup("vultrack-agent"); err == nil {
-		uid, _ := strconv.Atoi(u.Uid)
-		gid, _ := strconv.Atoi(u.Gid)
-		if err := os.Chown(cfg.TokenFile, uid, gid); err != nil {
-			logInfo("Note: could not set token file ownership to vultrack-agent: %v", err)
-		}
-	}
 
 	logInfo("Enrollment successful! Agent token saved to %s", cfg.TokenFile)
 	logInfo("Agent status: %s", resp.Status)
