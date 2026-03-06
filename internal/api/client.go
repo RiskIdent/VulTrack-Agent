@@ -286,6 +286,9 @@ func TokenPrefix(s string) string {
 // doEnroll is used internally by EnsureValidToken to enroll (or re-enroll)
 // the agent and store the resulting tokens.
 func (c *Client) doEnroll(hostname string, force bool) error {
+	if c.enrollmentKey == "" {
+		return fmt.Errorf("enrollment_key is not configured; cannot enroll or re-enroll automatically — set it in the config file or via --enrollment-key / VULTRACK_ENROLLMENT_KEY")
+	}
 	resp, err := c.Enroll(hostname, force)
 	if err != nil {
 		return fmt.Errorf("enrollment failed: %w", err)

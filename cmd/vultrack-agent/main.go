@@ -156,10 +156,6 @@ func runReport(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	if cfg.EnrollmentKey == "" {
-		return fmt.Errorf("enrollment_key is required in config for automatic re-enrollment")
-	}
-
 	// Collect data
 	logInfo("Collecting system information...")
 	sysInfo, err := collector.CollectSystemInfo()
@@ -296,10 +292,6 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	cfg, err := config.LoadConfig(configPath, flagOverrides)
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
-	}
-
-	if cfg.EnrollmentKey == "" {
-		return fmt.Errorf("enrollment_key is required in config for automatic re-enrollment")
 	}
 
 	// Setup signal handling
