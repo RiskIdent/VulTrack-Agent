@@ -4,8 +4,11 @@
 # VulTrack server URL
 server_url: "{{ vultrack_agent_server_url }}"
 
-# Path to store the agent token
-token_file: "{{ vultrack_agent_token_file }}"
+# enrollment_key must remain in the config permanently for automatic re-enrollment
+enrollment_key: "{{ vultrack_agent_enrollment_key }}"
+
+# Path to persist the refresh token on disk
+refresh_token_file: "{{ vultrack_agent_refresh_token_file }}"
 
 # How often to send reports in daemon mode
 report_interval: "{{ vultrack_agent_report_interval }}"

@@ -72,13 +72,13 @@
       - enroll
       - --enrollment-key
       - "{{ vultrack_agent_enrollment_key }}"
-    creates: "{{ vultrack_agent_token_file }}"
+    creates: "{{ vultrack_agent_refresh_token_file }}"
   when: vultrack_agent_enroll | bool
   no_log: true
 
-- name: Ensure token file has correct permissions
+- name: Ensure refresh token file has correct permissions
   ansible.builtin.file:
-    path: "{{ vultrack_agent_token_file }}"
+    path: "{{ vultrack_agent_refresh_token_file }}"
     owner: vultrack-agent
     group: vultrack-agent
     mode: "0600"

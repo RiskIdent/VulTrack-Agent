@@ -4,12 +4,16 @@
 # VulTrack server URL (required)
 server_url: https://vultrack.example.com
 
-# Enrollment key for initial registration (required for enroll command)
-# This can also be provided via --enrollment-key flag
+# Enrollment key for registration (required).
+# IMPORTANT: Keep this value in the config permanently.
+# It is used for initial enrollment and for automatic re-enrollment when the
+# refresh token expires or is revoked — without it the agent cannot recover
+# autonomously.
 enrollment_key: ""
 
-# Path to store the agent token (default: /etc/vultrack-agent/token)
-token_file: /etc/vultrack-agent/token
+# Path to persist the refresh token on disk (default: /var/lib/vultrack-agent/refresh.token)
+# The access token is held in memory only and is never written to disk.
+refresh_token_file: /var/lib/vultrack-agent/refresh.token
 
 # How often to send reports in daemon mode (default: 1h)
 # Examples: 30m, 1h, 2h, 24h

@@ -31,7 +31,7 @@ var insecureFlag bool
 
 // Flag variables
 var flagServerURL string
-var flagTokenFile string
+var flagRefreshTokenFile string
 var flagLogLevel string
 var flagLogFile string
 var flagCACert string
@@ -39,7 +39,7 @@ var flagCACert string
 func init() {
 	rootCmd.PersistentFlags().StringVar(&configPath, "config", "/etc/vultrack-agent/config.yaml", "Path to config file")
 	rootCmd.PersistentFlags().StringVar(&flagServerURL, "server-url", "", "VulTrack server URL")
-	rootCmd.PersistentFlags().StringVar(&flagTokenFile, "token-file", "", "Path to token file")
+	rootCmd.PersistentFlags().StringVar(&flagRefreshTokenFile, "refresh-token-file", "", "Path to refresh token file")
 	rootCmd.PersistentFlags().StringVar(&flagLogLevel, "log-level", "", "Log level (debug, info, warn, error)")
 	rootCmd.PersistentFlags().StringVar(&flagLogFile, "log-file", "", "Path to log file")
 	rootCmd.PersistentFlags().BoolVar(&insecureFlag, "insecure", false, "Skip TLS certificate verification")
@@ -50,8 +50,8 @@ func init() {
 		if flagServerURL != "" {
 			flagOverrides["server_url"] = flagServerURL
 		}
-		if flagTokenFile != "" {
-			flagOverrides["token_file"] = flagTokenFile
+		if flagRefreshTokenFile != "" {
+			flagOverrides["refresh_token_file"] = flagRefreshTokenFile
 		}
 		if flagLogLevel != "" {
 			flagOverrides["log_level"] = flagLogLevel
@@ -83,9 +83,11 @@ var enrollCmd = &cobra.Command{
 }
 
 var enrollmentKeyFlag string
+var forceEnrollFlag bool
 
 func init() {
 	enrollCmd.Flags().StringVar(&enrollmentKeyFlag, "enrollment-key", "", "Enrollment key for registration")
+	enrollCmd.Flags().BoolVar(&forceEnrollFlag, "force", false, "Force re-enrollment, revoking any existing registration")
 }
 
 func runEnroll(cmd *cobra.Command, args []string) error {
@@ -103,7 +105,6 @@ func runEnroll(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("enrollment_key is required (use --enrollment-key flag or set in config)")
 	}
 
-
 	// Collect system info for hostname
 	sysInfo, err := collector.CollectSystemInfo()
 	if err != nil {
@@ -111,30 +112,35 @@ func runEnroll(cmd *cobra.Command, args []string) error {
 	}
 
 	// Create API client
-	client, err := api.NewClient(cfg.ServerURL, cfg.Insecure, cfg.CACert)
+	client, err := api.NewClient(cfg.ServerURL, cfg.Insecure, cfg.CACert, cfg.EnrollmentKey, cfg.RefreshTokenFile)
 	if err != nil {
 		return fmt.Errorf("failed to create API client: %w", err)
 	}
 
-	// Enroll
 	logInfo("Enrolling agent with hostname: %s", sysInfo.Hostname)
-	resp, err := client.Enroll(sysInfo.Hostname, cfg.EnrollmentKey)
+	resp, err := client.Enroll(sysInfo.Hostname, forceEnrollFlag)
 	if err != nil {
+		if apiErr, ok := err.(*api.APIError); ok {
+			if apiErr.StatusCode == 401 {
+				logError("Enrollment key is invalid, expired, or inactive.")
+				return fmt.Errorf("enrollment failed: %w", err)
+			}
+			if apiErr.StatusCode == 409 {
+				return fmt.Errorf("hostname %q is already registered; use --force to re-enroll", sysInfo.Hostname)
+			}
+		}
 		return fmt.Errorf("enrollment failed: %w", err)
 	}
 
-	// Save token
-	if err := cfg.EnsureTokenDir(); err != nil {
-		return fmt.Errorf("failed to create token directory: %w", err)
+	if err := client.StoreTokens(resp.AccessToken, resp.ExpiresIn, resp.RefreshToken); err != nil {
+		return fmt.Errorf("failed to save tokens: %w", err)
 	}
 
-	if err := os.WriteFile(cfg.TokenFile, []byte(resp.AgentToken), 0600); err != nil {
-		return fmt.Errorf("failed to save token: %w", err)
-	}
-
-
-	logInfo("Enrollment successful! Agent token saved to %s", cfg.TokenFile)
+	logInfo("Enrollment successful! Refresh token saved to %s", cfg.RefreshTokenFile)
 	logInfo("Agent status: %s", resp.Status)
+	if resp.Status == "pending" {
+		logInfo("NOTE: The agent is pending admin approval. Reports will be sent once approved.")
+	}
 	return nil
 }
 
@@ -150,11 +156,8 @@ func runReport(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-
-	// Read token
-	token, err := readToken(cfg.TokenFile)
-	if err != nil {
-		return fmt.Errorf("failed to read token: %w", err)
+	if cfg.EnrollmentKey == "" {
+		return fmt.Errorf("enrollment_key is required in config for automatic re-enrollment")
 	}
 
 	// Collect data
@@ -172,48 +175,32 @@ func runReport(cmd *cobra.Command, args []string) error {
 
 	logInfo("Collected %d packages", len(packages))
 
-	// Convert packages
-	apiPackages := make([]api.Package, len(packages))
-	for i, pkg := range packages {
-		apiPackages[i] = api.Package{
-			Name:    pkg.Name,
-			Version: pkg.Version,
-			Arch:    pkg.Arch,
-			Source:  pkg.Source,
-		}
-	}
-
-	// Create report request
-	report := &api.ReportRequest{
-		Hostname:       sysInfo.Hostname,
-		AgentVersion:   version,
-		OSFamily:       sysInfo.OSFamily,
-		OSRelease:      sysInfo.OSRelease,
-		OSCodename:     sysInfo.OSCodename,
-		Kernel:         sysInfo.Kernel,
-		Arch:           sysInfo.Arch,
-		PackageManager: sysInfo.PackageManager,
-		IPv4Addrs:      sysInfo.IPv4Addrs,
-		ReportedAt:     time.Now().UTC().Format(time.RFC3339),
-		Packages:       apiPackages,
-	}
-
 	// Create API client
-	client, err := api.NewClient(cfg.ServerURL, cfg.Insecure, cfg.CACert)
+	client, err := api.NewClient(cfg.ServerURL, cfg.Insecure, cfg.CACert, cfg.EnrollmentKey, cfg.RefreshTokenFile)
 	if err != nil {
 		return fmt.Errorf("failed to create API client: %w", err)
 	}
 
+	// Ensure we have a valid access token
+	if err := client.EnsureValidToken(sysInfo.Hostname); err != nil {
+		return fmt.Errorf("failed to obtain valid token: %w", err)
+	}
+
 	// Send report
 	logInfo("Sending report to %s...", cfg.ServerURL)
-	resp, err := client.Report(token, report)
+	resp, err := sendReport(client, sysInfo, packages)
 	if err != nil {
-		if apiErr, ok := err.(*api.APIError); ok {
-			if apiErr.StatusCode == 401 {
-				logError("Authentication failed. Please re-enroll the agent.")
-			} else if apiErr.StatusCode == 403 {
-				logError("Access denied. Agent may be pending or revoked.")
+		if apiErr, ok := err.(*api.APIError); ok && apiErr.StatusCode == 401 {
+			// Access token expired mid-cycle — refresh and retry once
+			if rfErr := client.EnsureValidToken(sysInfo.Hostname); rfErr != nil {
+				return fmt.Errorf("token refresh failed: %w", rfErr)
 			}
+			resp, err = sendReport(client, sysInfo, packages)
+		}
+	}
+	if err != nil {
+		if apiErr, ok := err.(*api.APIError); ok && apiErr.StatusCode == 403 {
+			logError("Access denied. Agent may be pending approval or revoked.")
 		}
 		return fmt.Errorf("report failed: %w", err)
 	}
@@ -311,11 +298,8 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-
-	// Read token
-	token, err := readToken(cfg.TokenFile)
-	if err != nil {
-		return fmt.Errorf("failed to read token: %w", err)
+	if cfg.EnrollmentKey == "" {
+		return fmt.Errorf("enrollment_key is required in config for automatic re-enrollment")
 	}
 
 	// Setup signal handling
@@ -323,7 +307,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
 
 	// Create API client
-	client, err := api.NewClient(cfg.ServerURL, cfg.Insecure, cfg.CACert)
+	client, err := api.NewClient(cfg.ServerURL, cfg.Insecure, cfg.CACert, cfg.EnrollmentKey, cfg.RefreshTokenFile)
 	if err != nil {
 		return fmt.Errorf("failed to create API client: %w", err)
 	}
@@ -332,7 +316,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	logInfo("Press Ctrl+C to stop")
 
 	// Send initial report
-	if err := sendReport(client, token, cfg); err != nil {
+	if err := runReportCycle(client); err != nil {
 		logError("Initial report failed: %v", err)
 	}
 
@@ -347,15 +331,16 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			logInfo("Received shutdown signal, stopping...")
 			return nil
 		case <-ticker.C:
-			if err := sendReport(client, token, cfg); err != nil {
+			if err := runReportCycle(client); err != nil {
 				logError("Report failed: %v", err)
 			}
 		}
 	}
 }
 
-func sendReport(client *api.Client, token string, cfg *config.Config) error {
-	// Collect data
+// runReportCycle runs one full report cycle: ensure valid token, collect, send.
+func runReportCycle(client *api.Client) error {
+	// Collect system info first so we have the hostname for (re-)enrollment
 	sysInfo, err := collector.CollectSystemInfo()
 	if err != nil {
 		return fmt.Errorf("failed to collect system info: %w", err)
@@ -366,7 +351,35 @@ func sendReport(client *api.Client, token string, cfg *config.Config) error {
 		return fmt.Errorf("failed to collect packages: %w", err)
 	}
 
-	// Convert packages
+	// Ensure we have a valid access token (enroll / refresh / re-enroll as needed)
+	if err := client.EnsureValidToken(sysInfo.Hostname); err != nil {
+		return err
+	}
+
+	logInfo("Sending report (%d packages)...", len(packages))
+	resp, err := sendReport(client, sysInfo, packages)
+	if err != nil {
+		if apiErr, ok := err.(*api.APIError); ok && apiErr.StatusCode == 401 {
+			// Access token expired mid-cycle — refresh and retry once
+			if rfErr := client.EnsureValidToken(sysInfo.Hostname); rfErr != nil {
+				return fmt.Errorf("token refresh failed: %w", rfErr)
+			}
+			resp, err = sendReport(client, sysInfo, packages)
+		}
+	}
+	if err != nil {
+		if apiErr, ok := err.(*api.APIError); ok && apiErr.StatusCode == 403 {
+			logError("Access denied. Agent may be pending approval or revoked.")
+		}
+		return err
+	}
+
+	logInfo("Report sent successfully (Server ID: %d, Packages: %d)", resp.ServerID, resp.PackageCount)
+	return nil
+}
+
+// sendReport builds the report request from collected data and sends it.
+func sendReport(client *api.Client, sysInfo *collector.SystemInfo, packages []collector.Package) (*api.ReportResponse, error) {
 	apiPackages := make([]api.Package, len(packages))
 	for i, pkg := range packages {
 		apiPackages[i] = api.Package{
@@ -377,7 +390,6 @@ func sendReport(client *api.Client, token string, cfg *config.Config) error {
 		}
 	}
 
-	// Create report request
 	report := &api.ReportRequest{
 		Hostname:       sysInfo.Hostname,
 		AgentVersion:   version,
@@ -392,22 +404,7 @@ func sendReport(client *api.Client, token string, cfg *config.Config) error {
 		Packages:       apiPackages,
 	}
 
-	// Send report
-	logInfo("Sending report (%d packages)...", len(apiPackages))
-	resp, err := client.Report(token, report)
-	if err != nil {
-		if apiErr, ok := err.(*api.APIError); ok {
-			if apiErr.StatusCode == 401 {
-				logError("Authentication failed. Please re-enroll the agent.")
-			} else if apiErr.StatusCode == 403 {
-				logError("Access denied. Agent may be pending or revoked.")
-			}
-		}
-		return err
-	}
-
-	logInfo("Report sent successfully (Server ID: %d, Packages: %d)", resp.ServerID, resp.PackageCount)
-	return nil
+	return client.Report(report)
 }
 
 var statusCmd = &cobra.Command{
@@ -423,65 +420,73 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Println("=== VulTrack Agent Status ===")
-	fmt.Printf("Server URL: %s\n", cfg.ServerURL)
-	fmt.Printf("Token File: %s\n", cfg.TokenFile)
-	fmt.Printf("Report Interval: %v\n", cfg.ReportInterval)
-	fmt.Printf("Log Level: %s\n", cfg.LogLevel)
-	fmt.Printf("Log File: %s\n", cfg.LogFile)
-
-	// Check token file
-	tokenExists := false
-	if _, err := os.Stat(cfg.TokenFile); err == nil {
-		tokenExists = true
-		fmt.Printf("Token File Status: exists\n")
+	fmt.Printf("Server URL:          %s\n", cfg.ServerURL)
+	fmt.Printf("Refresh Token File:  %s\n", cfg.RefreshTokenFile)
+	fmt.Printf("Report Interval:     %v\n", cfg.ReportInterval)
+	fmt.Printf("Log Level:           %s\n", cfg.LogLevel)
+	fmt.Printf("Log File:            %s\n", cfg.LogFile)
+	if cfg.EnrollmentKey != "" {
+		fmt.Printf("Enrollment Key:      %s (set)\n", api.TokenPrefix(cfg.EnrollmentKey))
 	} else {
-		fmt.Printf("Token File Status: not found\n")
+		fmt.Printf("Enrollment Key:      (not set)\n")
 	}
 
-	if tokenExists {
-		token, err := readToken(cfg.TokenFile)
-		if err != nil {
-			fmt.Printf("Token Status: error reading token (%v)\n", err)
-		} else {
-			// Mask token for display
-			maskedToken := maskToken(token)
-			fmt.Printf("Token Status: present (%s)\n", maskedToken)
+	// Check refresh token file
+	if _, err := os.Stat(cfg.RefreshTokenFile); err == nil {
+		fmt.Printf("Refresh Token:       present\n")
+	} else {
+		fmt.Printf("Refresh Token:       not found (agent not enrolled)\n")
+		return nil
+	}
 
-			// Try to validate token by making a test report
-			client, err := api.NewClient(cfg.ServerURL, cfg.Insecure, cfg.CACert)
-			if err == nil {
-				// Collect minimal info for test
-				sysInfo, err := collector.CollectSystemInfo()
-				if err == nil {
-					testReport := &api.ReportRequest{
-						Hostname:     sysInfo.Hostname,
-						AgentVersion: version,
-						OSFamily:     sysInfo.OSFamily,
-						OSRelease:    sysInfo.OSRelease,
-						Kernel:       sysInfo.Kernel,
-						Arch:         sysInfo.Arch,
-						IPv4Addrs:    sysInfo.IPv4Addrs,
-						Packages:     []api.Package{}, // Empty for status check
-					}
-					_, err := client.Report(token, testReport)
-					if err != nil {
-						if apiErr, ok := err.(*api.APIError); ok {
-							if apiErr.StatusCode == 401 {
-								fmt.Printf("Token Validation: INVALID (authentication failed)\n")
-							} else if apiErr.StatusCode == 403 {
-								fmt.Printf("Token Validation: DENIED (agent may be pending or revoked)\n")
-							} else {
-								fmt.Printf("Token Validation: ERROR (%v)\n", err)
-							}
-						} else {
-							fmt.Printf("Token Validation: ERROR (%v)\n", err)
-						}
-					} else {
-						fmt.Printf("Token Validation: VALID\n")
-					}
-				}
+	// Validate the token by running the state machine and sending a test report
+	if cfg.EnrollmentKey == "" {
+		fmt.Printf("Token Validation:    skipped (enrollment_key not set)\n")
+		return nil
+	}
+
+	client, err := api.NewClient(cfg.ServerURL, cfg.Insecure, cfg.CACert, cfg.EnrollmentKey, cfg.RefreshTokenFile)
+	if err != nil {
+		fmt.Printf("Token Validation:    ERROR (could not create client: %v)\n", err)
+		return nil
+	}
+
+	sysInfo, err := collector.CollectSystemInfo()
+	if err != nil {
+		fmt.Printf("Token Validation:    ERROR (could not collect system info: %v)\n", err)
+		return nil
+	}
+
+	if err := client.EnsureValidToken(sysInfo.Hostname); err != nil {
+		fmt.Printf("Token Validation:    INVALID (%v)\n", err)
+		return nil
+	}
+
+	testReport := &api.ReportRequest{
+		Hostname:     sysInfo.Hostname,
+		AgentVersion: version,
+		OSFamily:     sysInfo.OSFamily,
+		OSRelease:    sysInfo.OSRelease,
+		Kernel:       sysInfo.Kernel,
+		Arch:         sysInfo.Arch,
+		IPv4Addrs:    sysInfo.IPv4Addrs,
+		Packages:     []api.Package{},
+	}
+	_, err = client.Report(testReport)
+	if err != nil {
+		if apiErr, ok := err.(*api.APIError); ok {
+			if apiErr.StatusCode == 401 {
+				fmt.Printf("Token Validation:    INVALID (authentication failed)\n")
+			} else if apiErr.StatusCode == 403 {
+				fmt.Printf("Token Validation:    DENIED (agent may be pending or revoked)\n")
+			} else {
+				fmt.Printf("Token Validation:    ERROR (%v)\n", err)
 			}
+		} else {
+			fmt.Printf("Token Validation:    ERROR (%v)\n", err)
 		}
+	} else {
+		fmt.Printf("Token Validation:    VALID\n")
 	}
 
 	return nil
@@ -493,25 +498,6 @@ var versionCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Printf("vultrack-agent version %s (built %s)\n", version, buildTime)
 	},
-}
-
-func readToken(tokenFile string) (string, error) {
-	data, err := os.ReadFile(tokenFile)
-	if err != nil {
-		return "", fmt.Errorf("failed to read token file: %w", err)
-	}
-	token := string(data)
-	if token == "" {
-		return "", fmt.Errorf("token file is empty")
-	}
-	return token, nil
-}
-
-func maskToken(token string) string {
-	if len(token) <= 8 {
-		return "***"
-	}
-	return token[:4] + "..." + token[len(token)-4:]
 }
 
 func logInfo(format string, args ...interface{}) {

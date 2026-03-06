@@ -12,24 +12,27 @@ import (
 
 // Config holds all configuration for the agent
 type Config struct {
-	ServerURL      string        `yaml:"server_url" env:"VULTRACK_SERVER_URL"`
-	EnrollmentKey  string        `yaml:"enrollment_key" env:"VULTRACK_ENROLLMENT_KEY"`
-	TokenFile      string        `yaml:"token_file" env:"VULTRACK_TOKEN_FILE"`
-	ReportInterval time.Duration `yaml:"report_interval" env:"VULTRACK_REPORT_INTERVAL"`
-	LogLevel       string        `yaml:"log_level" env:"VULTRACK_LOG_LEVEL"`
-	LogFile        string        `yaml:"log_file" env:"VULTRACK_LOG_FILE"`
-	Insecure       bool          `yaml:"insecure" env:"VULTRACK_INSECURE"`
-	CACert         string        `yaml:"ca_cert" env:"VULTRACK_CA_CERT"`
+	ServerURL        string        `yaml:"server_url" env:"VULTRACK_SERVER_URL"`
+	// EnrollmentKey is required for enrollment and automatic re-enrollment.
+	// Keep this value permanently in the config — it is needed to re-enroll
+	// when the refresh token expires or is revoked.
+	EnrollmentKey    string        `yaml:"enrollment_key" env:"VULTRACK_ENROLLMENT_KEY"`
+	RefreshTokenFile string        `yaml:"refresh_token_file" env:"VULTRACK_REFRESH_TOKEN_FILE"`
+	ReportInterval   time.Duration `yaml:"report_interval" env:"VULTRACK_REPORT_INTERVAL"`
+	LogLevel         string        `yaml:"log_level" env:"VULTRACK_LOG_LEVEL"`
+	LogFile          string        `yaml:"log_file" env:"VULTRACK_LOG_FILE"`
+	Insecure         bool          `yaml:"insecure" env:"VULTRACK_INSECURE"`
+	CACert           string        `yaml:"ca_cert" env:"VULTRACK_CA_CERT"`
 }
 
 // DefaultConfig returns a config with default values
 func DefaultConfig() *Config {
 	return &Config{
-		TokenFile:      "/etc/vultrack-agent/token",
-		ReportInterval: 1 * time.Hour,
-		LogLevel:       "info",
-		LogFile:        "",
-		Insecure:       false,
+		RefreshTokenFile: "/var/lib/vultrack-agent/refresh.token",
+		ReportInterval:   1 * time.Hour,
+		LogLevel:         "info",
+		LogFile:          "",
+		Insecure:         false,
 	}
 }
 
@@ -55,8 +58,8 @@ func LoadConfig(configPath string, overrides map[string]string) (*Config, error)
 			cfg.ServerURL = value
 		case "enrollment_key":
 			cfg.EnrollmentKey = value
-		case "token_file":
-			cfg.TokenFile = value
+		case "refresh_token_file":
+			cfg.RefreshTokenFile = value
 		case "report_interval":
 			if d, err := time.ParseDuration(value); err == nil {
 				cfg.ReportInterval = d
@@ -93,8 +96,8 @@ func (c *Config) LoadFromEnv() {
 	if val := os.Getenv("VULTRACK_ENROLLMENT_KEY"); val != "" {
 		c.EnrollmentKey = val
 	}
-	if val := os.Getenv("VULTRACK_TOKEN_FILE"); val != "" {
-		c.TokenFile = val
+	if val := os.Getenv("VULTRACK_REFRESH_TOKEN_FILE"); val != "" {
+		c.RefreshTokenFile = val
 	}
 	if val := os.Getenv("VULTRACK_REPORT_INTERVAL"); val != "" {
 		if d, err := time.ParseDuration(val); err == nil {
@@ -121,12 +124,12 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("server_url is required")
 	}
 	// Enforce HTTPS unless explicitly opted out with insecure=true.
-	// Plain HTTP would transmit the agent token and inventory data in cleartext.
+	// Plain HTTP would transmit tokens and inventory data in cleartext.
 	if !strings.HasPrefix(c.ServerURL, "https://") && !c.Insecure {
 		return fmt.Errorf("server_url must use HTTPS (got %q); set insecure=true to allow HTTP", c.ServerURL)
 	}
-	if c.TokenFile == "" {
-		return fmt.Errorf("token_file is required")
+	if c.RefreshTokenFile == "" {
+		return fmt.Errorf("refresh_token_file is required")
 	}
 	if c.ReportInterval <= 0 {
 		return fmt.Errorf("report_interval must be positive")
@@ -138,8 +141,9 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// EnsureTokenDir ensures the directory for the token file exists
-func (c *Config) EnsureTokenDir() error {
-	dir := filepath.Dir(c.TokenFile)
-	return os.MkdirAll(dir, 0755)
+// EnsureRefreshTokenDir ensures the directory for the refresh token file exists
+// with restrictive permissions (0700) so only the service user can access it.
+func (c *Config) EnsureRefreshTokenDir() error {
+	dir := filepath.Dir(c.RefreshTokenFile)
+	return os.MkdirAll(dir, 0700)
 }

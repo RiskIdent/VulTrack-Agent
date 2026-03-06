@@ -13,6 +13,7 @@ The VulTrack Server can be found in [this repository](https://github.com/RiskIde
 - **Flexible Configuration**: Config file, environment variables, or command-line flags
 - **Automatic Package Detection**: Supports dpkg (Debian/Ubuntu)
 - **Robust Error Handling**: Retry logic with exponential backoff
+- **Automatic Token Refresh**: Short-lived access tokens are refreshed automatically; the agent re-enrolls itself when the refresh token expires
 - **Systemd Integration**: Pre-configured service for easy installation
 - **Ansible Role**: Included Ansible role for automated fleet deployment
 
@@ -46,10 +47,13 @@ vultrack_agent_server_url: ""
 # Set to true to enroll the agent during the play
 # When true, vultrack_agent_enrollment_key must also be set
 vultrack_agent_enroll: false
+# IMPORTANT: enrollment_key must remain in the config permanently.
+# The agent needs it to re-enroll automatically when the refresh token
+# expires or is revoked.
 vultrack_agent_enrollment_key: ""
 
 # Agent configuration
-vultrack_agent_token_file: "/etc/vultrack-agent/token"
+vultrack_agent_refresh_token_file: "/var/lib/vultrack-agent/refresh.token"
 vultrack_agent_report_interval: "1h"
 vultrack_agent_log_level: "info"
 vultrack_agent_log_file: ""
@@ -121,7 +125,7 @@ vultrack_agent_config_file: "/etc/vultrack-agent/config.yaml"
 3. Creates the system user and config directory (`/etc/vultrack-agent/`)
 4. Downloads and installs the agent from GitHub Releases (`.deb` or binary)
 5. Writes the configuration file from template
-6. Optionally runs `vultrack-agent enroll` (skipped if token file already exists — idempotent)
+6. Optionally runs `vultrack-agent enroll` (skipped if refresh token file already exists — idempotent)
 7. Ensures the systemd service is enabled and running
 
 ---
@@ -151,11 +155,14 @@ Full reference:
 # VulTrack server URL (required)
 server_url: https://vultrack.example.com
 
-# Enrollment key for initial registration (can also be passed via flag)
+# Enrollment key (required — keep this permanently in the config).
+# Used for initial enrollment and for automatic re-enrollment when the
+# refresh token expires or is revoked.
 enrollment_key: ""
 
-# Path to store the agent token
-token_file: /etc/vultrack-agent/token
+# Path to persist the refresh token on disk.
+# The access token is held in memory only and is never written to disk.
+refresh_token_file: /var/lib/vultrack-agent/refresh.token
 
 # How often to send reports in daemon mode (default: 1h)
 # Examples: 30m, 1h, 2h, 24h
@@ -181,8 +188,8 @@ An annotated example is available at `contrib/config.yaml.example`.
 | Variable | Description |
 |---|---|
 | `VULTRACK_SERVER_URL` | VulTrack server URL |
-| `VULTRACK_ENROLLMENT_KEY` | Enrollment key |
-| `VULTRACK_TOKEN_FILE` | Path to token file |
+| `VULTRACK_ENROLLMENT_KEY` | Enrollment key (keep permanently) |
+| `VULTRACK_REFRESH_TOKEN_FILE` | Path to refresh token file |
 | `VULTRACK_REPORT_INTERVAL` | Report interval (e.g. `1h`, `30m`) |
 | `VULTRACK_LOG_LEVEL` | Log level (`debug`, `info`, `warn`, `error`) |
 | `VULTRACK_LOG_FILE` | Path to log file |
@@ -196,7 +203,7 @@ An annotated example is available at `contrib/config.yaml.example`.
 | `--config` | Path to config file |
 | `--server-url` | VulTrack server URL |
 | `--enrollment-key` | Enrollment key |
-| `--token-file` | Path to token file |
+| `--refresh-token-file` | Path to refresh token file |
 | `--log-level` | Log level |
 | `--log-file` | Path to log file |
 | `--insecure` | Skip TLS verification |
@@ -215,7 +222,14 @@ obtained from the VulTrack web UI.
 sudo vultrack-agent enroll --enrollment-key YOUR_ENROLLMENT_KEY
 ```
 
-On success, the agent token is saved to the configured `token_file`.
+On success, the refresh token is saved to `refresh_token_file`. The access
+token is held in memory only.
+
+To force re-enrollment (revokes the existing registration):
+
+```bash
+sudo vultrack-agent enroll --enrollment-key YOUR_ENROLLMENT_KEY --force
+```
 
 ### One-Time Report
 
@@ -234,7 +248,8 @@ sudo vultrack-agent daemon
 ```
 
 The daemon handles `SIGINT` and `SIGTERM` for graceful shutdown and sends an
-initial report immediately on startup.
+initial report immediately on startup. It automatically refreshes the access
+token and re-enrolls using `enrollment_key` when the refresh token expires.
 
 ### Export Report (without Server)
 
@@ -288,23 +303,49 @@ Packages are collected via `dpkg-query` on Debian/Ubuntu systems and
 
 ---
 
+## Token Lifecycle
+
+The agent uses two tokens:
+
+| Token | Storage | Lifetime |
+|---|---|---|
+| **Access token** (JWT) | Memory only, never written to disk | Short-lived (default 24 h) |
+| **Refresh token** (`rt_…`) | `refresh_token_file` (0600) | Long-lived (default 90 days) |
+
+The agent manages token renewal automatically:
+
+1. If a valid access token is in memory — use it directly.
+2. If the access token is absent or expired — exchange the refresh token for a new pair.
+3. If the refresh token is rejected (401) — re-enroll automatically using `enrollment_key`.
+4. After enrollment, if the agent status is `pending` — wait for admin approval before reporting.
+
+This is why **`enrollment_key` must remain permanently in the config** — it enables
+fully autonomous recovery without manual intervention.
+
+---
+
 ## Error Handling
 
 | Condition | Behavior |
 |---|---|
 | Network error | Retry up to 3 times with exponential backoff (1s, 2s, 4s) |
-| `401 Unauthorized` | Token invalid or expired — re-enrollment required, no retry |
+| `401` on report | Refresh access token and retry once |
+| `401` on token refresh | Re-enroll with `force=true` using `enrollment_key` |
+| `401` on enrollment | Enrollment key invalid — log error and exit |
 | `403 Forbidden` | Agent pending approval or revoked — no retry |
+| `409 Conflict` on enroll | Hostname already registered — use `--force` to re-enroll |
 
 ---
 
 ## Security
 
-- Token file is stored with `0600` permissions (root read-only)
+- Refresh token file is stored with `0600` permissions (owner read-only)
+- Refresh token directory is created with `0700` permissions
+- Access token is held in memory only and never written to disk
+- Token writes use an atomic write-then-rename pattern to prevent corruption
 - TLS certificate validation is enforced by default
 - Custom CA certificates can be provided for internal PKI environments
-- Tokens and enrollment keys are never fully written to logs
-- The `status` command masks the token in output (shows first/last 4 characters only)
+- Tokens and enrollment keys are never fully written to logs (only first 8 characters)
 - Ansible tasks use `no_log: true` for steps that handle secrets
 
 ---
@@ -340,7 +381,7 @@ vultrack-agent/
 │       └── main.go              # CLI entry point (6 commands)
 ├── internal/
 │   ├── api/
-│   │   └── client.go            # HTTP client for VulTrack API
+│   │   └── client.go            # HTTP client for VulTrack API v2
 │   ├── collector/
 │   │   ├── system.go            # System information collection
 │   │   └── packages.go          # Package enumeration (dpkg/rpm)
@@ -365,7 +406,7 @@ vultrack-agent/
 ### Dependencies
 
 - [`github.com/spf13/cobra`](https://github.com/spf13/cobra) — CLI framework
-- [`gopkg.in/yaml.v3`](https://pkg.go.dev/gopkg.in/yaml.v3) — YAML parsing
+- [`go.yaml.in/yaml/v4`](https://pkg.go.dev/go.yaml.in/yaml/v4) — YAML parsing
 - Standard library for everything else
 
 ### Build Requirements

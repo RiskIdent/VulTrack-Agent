@@ -9,8 +9,8 @@ import (
 
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
-	if cfg.TokenFile != "/etc/vultrack-agent/token" {
-		t.Errorf("unexpected TokenFile: %q", cfg.TokenFile)
+	if cfg.RefreshTokenFile != "/var/lib/vultrack-agent/refresh.token" {
+		t.Errorf("unexpected RefreshTokenFile: %q", cfg.RefreshTokenFile)
 	}
 	if cfg.ReportInterval != time.Hour {
 		t.Errorf("unexpected ReportInterval: %v", cfg.ReportInterval)
@@ -32,68 +32,68 @@ func TestValidate(t *testing.T) {
 		{
 			name: "valid https config",
 			cfg: Config{
-				ServerURL:      "https://example.com",
-				TokenFile:      "/tmp/token",
-				ReportInterval: time.Hour,
-				LogLevel:       "info",
+				ServerURL:        "https://example.com",
+				RefreshTokenFile: "/tmp/refresh.token",
+				ReportInterval:   time.Hour,
+				LogLevel:         "info",
 			},
 		},
 		{
 			name: "valid http with insecure",
 			cfg: Config{
-				ServerURL:      "http://example.com",
-				TokenFile:      "/tmp/token",
-				ReportInterval: time.Hour,
-				LogLevel:       "info",
-				Insecure:       true,
+				ServerURL:        "http://example.com",
+				RefreshTokenFile: "/tmp/refresh.token",
+				ReportInterval:   time.Hour,
+				LogLevel:         "info",
+				Insecure:         true,
 			},
 		},
 		{
 			name:    "missing server_url",
-			cfg:     Config{TokenFile: "/tmp/token", ReportInterval: time.Hour, LogLevel: "info"},
+			cfg:     Config{RefreshTokenFile: "/tmp/refresh.token", ReportInterval: time.Hour, LogLevel: "info"},
 			wantErr: true,
 		},
 		{
 			name: "http without insecure",
 			cfg: Config{
-				ServerURL:      "http://example.com",
-				TokenFile:      "/tmp/token",
-				ReportInterval: time.Hour,
-				LogLevel:       "info",
+				ServerURL:        "http://example.com",
+				RefreshTokenFile: "/tmp/refresh.token",
+				ReportInterval:   time.Hour,
+				LogLevel:         "info",
 			},
 			wantErr: true,
 		},
 		{
-			name:    "missing token_file",
+			name:    "missing refresh_token_file",
 			cfg:     Config{ServerURL: "https://example.com", ReportInterval: time.Hour, LogLevel: "info"},
 			wantErr: true,
 		},
 		{
 			name: "zero report_interval",
 			cfg: Config{
-				ServerURL: "https://example.com",
-				TokenFile: "/tmp/token",
-				LogLevel:  "info",
+				ServerURL:        "https://example.com",
+				RefreshTokenFile: "/tmp/refresh.token",
+				LogLevel:         "info",
 			},
 			wantErr: true,
 		},
 		{
 			name: "invalid log_level",
 			cfg: Config{
-				ServerURL:      "https://example.com",
-				TokenFile:      "/tmp/token",
-				ReportInterval: time.Hour,
-				LogLevel:       "verbose",
+				ServerURL:        "https://example.com",
+				RefreshTokenFile: "/tmp/refresh.token",
+				ReportInterval:   time.Hour,
+				LogLevel:         "verbose",
 			},
 			wantErr: true,
 		},
 		{
 			name: "log_level case insensitive",
 			cfg: Config{
-				ServerURL:      "https://example.com",
-				TokenFile:      "/tmp/token",
-				ReportInterval: time.Hour,
-				LogLevel:       "DEBUG",
+				ServerURL:        "https://example.com",
+				RefreshTokenFile: "/tmp/refresh.token",
+				ReportInterval:   time.Hour,
+				LogLevel:         "DEBUG",
 			},
 		},
 	}
@@ -111,7 +111,7 @@ func TestValidate(t *testing.T) {
 func TestLoadFromEnv(t *testing.T) {
 	t.Setenv("VULTRACK_SERVER_URL", "https://env.example.com")
 	t.Setenv("VULTRACK_ENROLLMENT_KEY", "env-key")
-	t.Setenv("VULTRACK_TOKEN_FILE", "/tmp/env-token")
+	t.Setenv("VULTRACK_REFRESH_TOKEN_FILE", "/tmp/env-refresh.token")
 	t.Setenv("VULTRACK_REPORT_INTERVAL", "30m")
 	t.Setenv("VULTRACK_LOG_LEVEL", "debug")
 	t.Setenv("VULTRACK_LOG_FILE", "/tmp/agent.log")
@@ -127,8 +127,8 @@ func TestLoadFromEnv(t *testing.T) {
 	if cfg.EnrollmentKey != "env-key" {
 		t.Errorf("EnrollmentKey = %q", cfg.EnrollmentKey)
 	}
-	if cfg.TokenFile != "/tmp/env-token" {
-		t.Errorf("TokenFile = %q", cfg.TokenFile)
+	if cfg.RefreshTokenFile != "/tmp/env-refresh.token" {
+		t.Errorf("RefreshTokenFile = %q", cfg.RefreshTokenFile)
 	}
 	if cfg.ReportInterval != 30*time.Minute {
 		t.Errorf("ReportInterval = %v", cfg.ReportInterval)
@@ -159,7 +159,7 @@ func TestLoadFromEnv_EmptyVarsDoNotOverride(t *testing.T) {
 func TestLoadFromFile(t *testing.T) {
 	content := `server_url: https://file.example.com
 enrollment_key: file-key
-token_file: /tmp/file-token
+refresh_token_file: /tmp/file-refresh.token
 log_level: warn
 insecure: false
 `
@@ -183,8 +183,8 @@ insecure: false
 	if cfg.EnrollmentKey != "file-key" {
 		t.Errorf("EnrollmentKey = %q", cfg.EnrollmentKey)
 	}
-	if cfg.TokenFile != "/tmp/file-token" {
-		t.Errorf("TokenFile = %q", cfg.TokenFile)
+	if cfg.RefreshTokenFile != "/tmp/file-refresh.token" {
+		t.Errorf("RefreshTokenFile = %q", cfg.RefreshTokenFile)
 	}
 	if cfg.LogLevel != "warn" {
 		t.Errorf("LogLevel = %q", cfg.LogLevel)
@@ -264,11 +264,11 @@ func TestLoadConfig_MissingFileIsOK(t *testing.T) {
 	}
 }
 
-func TestEnsureTokenDir(t *testing.T) {
+func TestEnsureRefreshTokenDir(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "subdir", "nested")
-	cfg := &Config{TokenFile: filepath.Join(dir, "token")}
-	if err := cfg.EnsureTokenDir(); err != nil {
-		t.Fatalf("EnsureTokenDir error: %v", err)
+	cfg := &Config{RefreshTokenFile: filepath.Join(dir, "refresh.token")}
+	if err := cfg.EnsureRefreshTokenDir(); err != nil {
+		t.Fatalf("EnsureRefreshTokenDir error: %v", err)
 	}
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		t.Error("directory was not created")
