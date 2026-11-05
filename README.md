@@ -412,6 +412,28 @@ list is all or nothing: if the dpkg database or a file list cannot be read, or
 the time budget runs out, `packageInfo` is omitted with an error. Only file
 names and modes are read, never file contents.
 
+Selected `packageInfo` entries from an Ubuntu 24.04 server (agent 1.3.0; 836
+entries, 88 KB of the 186 KB `runtime` object):
+
+```json
+"packageInfo": [
+  {"package": "curl", "entryPoints": ["executable"], "depends": ["libc6", "libcurl4t64", "zlib1g"]},
+  {"package": "libcurl4t64",
+   "depends": ["ca-certificates", "libbrotli1", "libc6", "libgssapi-krb5-2", "libidn2-0", "libldap2",
+               "libnghttp2-14", "libpsl5t64", "librtmp1", "libssh-4", "libssl3t64", "libzstd1", "zlib1g"]},
+  {"package": "libpam-modules", "entryPoints": ["executable", "plugin"],
+   "depends": ["debconf", "libaudit1", "libc6", "libcrypt1", "libdb5.3t64", "libpam-modules-bin",
+               "libpam0g", "libselinux1", "libsystemd0"]},
+  {"package": "libssl3t64", "entryPoints": ["plugin"], "depends": ["libc6"]},
+  {"package": "openssl", "entryPoints": ["executable"], "depends": ["libc6", "libssl3t64"]}
+]
+```
+
+`libcurl4t64` has no entry points of its own; it stays relevant because `curl`
+depends on it. `libssl3t64` is a `plugin` because of its OpenSSL providers and
+engines, `libpam-modules` because of the PAM modules in `security/` (and an
+executable helper).
+
 **Unknown is not empty.** A collector that cannot run (missing permission,
 missing tool, error, timeout) is omitted and the reason is listed in
 `runtime.errors`. An empty list means "collected, nothing found". Values that
