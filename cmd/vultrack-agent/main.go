@@ -453,38 +453,16 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	// A fresh process never holds an access token, so EnsureValidToken always
+	// performs a real refresh against the server. The server validates the
+	// refresh token (not revoked, not expired) and that the agent is active.
+	// No report is sent: that would overwrite server data and trigger a scan.
 	if err := client.EnsureValidToken(sysInfo.Hostname); err != nil {
 		fmt.Printf("Token Validation:    INVALID (%v)\n", err)
 		return nil
 	}
 
-	testReport := &api.ReportRequest{
-		Hostname:     sysInfo.Hostname,
-		AgentVersion: version,
-		OSFamily:     sysInfo.OSFamily,
-		OSRelease:    sysInfo.OSRelease,
-		Kernel:       sysInfo.Kernel,
-		Arch:         sysInfo.Arch,
-		IPv4Addrs:    sysInfo.IPv4Addrs,
-		Packages:     []api.Package{},
-	}
-	_, err = client.Report(testReport)
-	if err != nil {
-		if apiErr, ok := err.(*api.APIError); ok {
-			if apiErr.StatusCode == 401 {
-				fmt.Printf("Token Validation:    INVALID (authentication failed)\n")
-			} else if apiErr.StatusCode == 403 {
-				fmt.Printf("Token Validation:    DENIED (agent may be pending or revoked)\n")
-			} else {
-				fmt.Printf("Token Validation:    ERROR (%v)\n", err)
-			}
-		} else {
-			fmt.Printf("Token Validation:    ERROR (%v)\n", err)
-		}
-	} else {
-		fmt.Printf("Token Validation:    VALID\n")
-	}
-
+	fmt.Printf("Token Validation:    VALID\n")
 	return nil
 }
 
