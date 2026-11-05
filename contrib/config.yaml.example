@@ -33,8 +33,8 @@ insecure: false
 
 # --- Runtime facts -----------------------------------------------------------
 # The agent adds runtime facts to every report: loaded kernel modules, listening
-# sockets, packages in use by running processes, systemd services and a few
-# kernel settings. The server uses them to rule out vulnerabilities that cannot
+# sockets, packages in use by running processes, entry points and dependencies
+# of installed packages, systemd services and a few kernel settings. The server uses them to rule out vulnerabilities that cannot
 # affect this host. See the README section "Runtime Facts".
 
 # Master switch (default: true). false omits the runtime facts entirely.
@@ -46,6 +46,7 @@ runtime_collectors:
   - kernel
   - listeners
   - packages_in_use
+  - package_info
   - services
   - virtualization
 

@@ -62,8 +62,8 @@ sudo systemctl daemon-reload
 ```
 
 On RPM-based systems the agent reports packages via `rpm`; runtime facts that
-need dpkg (package attribution, installed kernels, reboot required) are
-reported as unknown.
+need dpkg (package attribution, `packageInfo`, installed kernels, reboot
+required) are reported as unknown.
 
 ---
 

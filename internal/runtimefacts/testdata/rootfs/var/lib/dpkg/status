@@ -17,6 +17,74 @@ Version: 6.8.0.124.124
 Package: linux-image-unsigned-6.8.0-124-generic-dbgsym
 Status: install ok installed
 
+Package: libc6
+Status: install ok installed
+Architecture: amd64
+Multi-Arch: same
+Version: 2.39-0ubuntu8
+
+Package: libc6
+Status: install ok installed
+Architecture: i386
+Multi-Arch: same
+Version: 2.39-0ubuntu8
+
+Package: libssl3t64
+Status: install ok installed
+Architecture: amd64
+Version: 3.0.13-0ubuntu3
+Depends: libc6 (>= 2.34)
+Provides: libssl3 (= 3.0.13-0ubuntu3)
+
 Package: openssh-server
 Status: install ok installed
+Architecture: amd64
 Version: 1:9.6p1-3ubuntu13
+Pre-Depends: init-system-helpers (>= 1.54~)
+Depends: libc6 (>= 2.38), libssl3t64 (>= 3.0.13), systemd | systemd-standalone-sysusers
+
+Package: nginx-common
+Status: install ok installed
+Architecture: all
+Version: 1.24.0-2ubuntu7
+
+Package: nginx-core
+Status: install ok installed
+Architecture: amd64
+Version: 1.24.0-2ubuntu7
+Depends: libc6 (>= 2.34), libssl3, nginx-common (= 1.24.0-2ubuntu7)
+
+Package: systemd
+Status: install ok installed
+Architecture: amd64
+Version: 255.4-1ubuntu8
+Depends: libc6 (>= 2.39),
+ libssl3t64 (>= 3.0.0)
+
+Package: coreutils
+Status: install ok installed
+Architecture: amd64
+Version: 9.4-3ubuntu6
+Pre-Depends: libc6 (>= 2.34)
+
+Package: other-doc
+Status: install ok installed
+Architecture: all
+Version: 1.0
+
+Package: foo
+Status: install ok installed
+Architecture: amd64
+Version: 1.0
+
+Package: bar
+Status: install ok installed
+Architecture: amd64
+Version: 1.0
+Depends: foo
+
+Package: python3.12
+Status: install ok installed
+Architecture: amd64
+Version: 3.12.3-1
+Depends: libc6, libssl3t64

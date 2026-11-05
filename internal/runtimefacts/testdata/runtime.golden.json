@@ -222,6 +222,105 @@
       ]
     }
   ],
+  "packageInfo": [
+    {
+      "package": "bar",
+      "entryPoints": [
+        "executable"
+      ],
+      "depends": [
+        "foo"
+      ]
+    },
+    {
+      "package": "coreutils",
+      "entryPoints": [
+        "executable"
+      ],
+      "depends": [
+        "libc6"
+      ]
+    },
+    {
+      "package": "foo",
+      "entryPoints": [
+        "executable"
+      ]
+    },
+    {
+      "package": "libc6"
+    },
+    {
+      "package": "libssl3t64",
+      "depends": [
+        "libc6"
+      ]
+    },
+    {
+      "package": "linux-image-6.8.0-121-generic"
+    },
+    {
+      "package": "linux-image-6.8.0-124-generic"
+    },
+    {
+      "package": "linux-image-generic"
+    },
+    {
+      "package": "linux-image-unsigned-6.8.0-124-generic-dbgsym"
+    },
+    {
+      "package": "nginx-common",
+      "entryPoints": [
+        "service"
+      ]
+    },
+    {
+      "package": "nginx-core",
+      "entryPoints": [
+        "executable"
+      ],
+      "depends": [
+        "libc6",
+        "libssl3t64",
+        "nginx-common"
+      ]
+    },
+    {
+      "package": "openssh-server",
+      "entryPoints": [
+        "executable",
+        "service"
+      ],
+      "depends": [
+        "libc6",
+        "libssl3t64",
+        "systemd"
+      ]
+    },
+    {
+      "package": "other-doc"
+    },
+    {
+      "package": "python3.12",
+      "entryPoints": [
+        "executable"
+      ],
+      "depends": [
+        "libc6",
+        "libssl3t64"
+      ]
+    },
+    {
+      "package": "systemd",
+      "entryPoints": [
+        "service"
+      ],
+      "depends": [
+        "libc6",
+        "libssl3t64"
+      ]
+    }
+  ],
   "services": [
     {
       "unit": "failed-thing.service",

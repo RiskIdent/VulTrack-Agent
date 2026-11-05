@@ -481,8 +481,10 @@ func TestFailingCollectorsAreOmitted(t *testing.T) {
 			t.Errorf("%s must be omitted, got %s", field, obj[field])
 		}
 	}
-	if _, ok := obj["kernel"]; !ok {
-		t.Error("kernel should still be collected")
+	for _, field := range []string{"kernel", "packageInfo"} {
+		if _, ok := obj[field]; !ok {
+			t.Errorf("%s should still be collected", field)
+		}
 	}
 	want := []CollectorError{
 		{Collector: "listeners", Error: "insufficient privileges"},
@@ -597,7 +599,7 @@ func TestSelectedCollectors(t *testing.T) {
 	opts := fixtureOptions(t)
 	opts.Collectors = []string{CollectorServices}
 	r := Collect(context.Background(), opts)
-	if r.Kernel != nil || r.Listeners != nil || r.PackagesInUse != nil || r.Virtualization != "" {
+	if r.Kernel != nil || r.Listeners != nil || r.PackagesInUse != nil || r.PackageInfo != nil || r.Virtualization != "" {
 		t.Error("collectors that are not selected must be omitted")
 	}
 	if r.Services == nil || r.Errors != nil {
@@ -616,8 +618,8 @@ func TestNonDpkgSystem(t *testing.T) {
 	opts := fixtureOptions(t)
 	opts.PackageManager = "rpm"
 	r := Collect(context.Background(), opts)
-	if r.PackagesInUse != nil {
-		t.Error("packagesInUse needs the package lookup")
+	if r.PackagesInUse != nil || r.PackageInfo != nil {
+		t.Error("packagesInUse and packageInfo need the dpkg database")
 	}
 	for _, l := range *r.Listeners {
 		if l.Package != "" {
@@ -673,21 +675,34 @@ func TestEncodeSizeLimit(t *testing.T) {
 		t.Error("no state must be stored when the index was not sent")
 	}
 
-	// Still too large without the index: packagesInUse goes, with an error.
+	// Still too large without the index: packageInfo goes first, with an error.
 	maxRuntimeBytes = len(bNoIdx) - 1
 	r = Collect(context.Background(), fixtureOptions(t))
 	if _, err := r.Encode(); err != nil {
 		t.Fatal(err)
 	}
-	if r.PackagesInUse != nil {
-		t.Error("packagesInUse should be omitted")
+	if r.PackageInfo != nil || r.PackagesInUse == nil {
+		t.Error("packageInfo should be omitted, packagesInUse kept")
 	}
-	found := false
-	for _, e := range r.Errors {
-		found = found || e.Collector == "packagesInUse"
+	if want := []CollectorError{{Collector: "packageInfo", Error: "omitted: runtime object exceeds the size limit"}}; !reflect.DeepEqual(r.Errors, want) {
+		t.Errorf("errors: got %+v, want %+v", r.Errors, want)
 	}
-	if !found {
-		t.Errorf("missing error entry: %+v", r.Errors)
+
+	// Still too large without packageInfo: packagesInUse goes as well.
+	withoutInfo := Collect(context.Background(), fixtureOptions(t))
+	withoutInfo.Kernel.ModuleIndex.Available, withoutInfo.Kernel.ModuleIndex.Builtin = nil, nil
+	withoutInfo.PackageInfo = nil
+	bNoInfo, _ := json.Marshal(withoutInfo)
+	maxRuntimeBytes = len(bNoInfo) - 1
+	r = Collect(context.Background(), fixtureOptions(t))
+	if _, err := r.Encode(); err != nil {
+		t.Fatal(err)
+	}
+	if r.PackageInfo != nil || r.PackagesInUse != nil {
+		t.Error("packageInfo and packagesInUse should be omitted")
+	}
+	if len(r.Errors) != 2 || r.Errors[0].Collector != "packageInfo" || r.Errors[1].Collector != "packagesInUse" {
+		t.Errorf("errors: got %+v", r.Errors)
 	}
 
 	// Far too large: Encode fails, the caller omits runtime entirely.

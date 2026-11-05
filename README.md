@@ -73,7 +73,7 @@ vultrack_agent_ca_cert: ""
 
 # Runtime facts (see "Runtime Facts" below)
 vultrack_agent_collect_runtime: true
-vultrack_agent_runtime_collectors: [kernel, listeners, packages_in_use, services, virtualization]
+vultrack_agent_runtime_collectors: [kernel, listeners, packages_in_use, package_info, services, virtualization]
 vultrack_agent_runtime_timeout_seconds: 20
 vultrack_agent_module_index_state_file: "/var/lib/vultrack-agent/module-index.sha256"
 
@@ -200,7 +200,7 @@ ca_cert: ""
 # Master switch; false omits the runtime facts entirely (default: true)
 collect_runtime: true
 # Collectors to run (default: all)
-runtime_collectors: [kernel, listeners, packages_in_use, services, virtualization]
+runtime_collectors: [kernel, listeners, packages_in_use, package_info, services, virtualization]
 # Overall time budget for all collectors in seconds (default: 20)
 runtime_timeout_seconds: 20
 # Hash of the last kernel module index the server accepted
@@ -371,17 +371,46 @@ decide automatically whether a vulnerability can affect the host, for example
 | `kernel` | `kernel` | Kernel release, `modulesDisabled`, loaded modules (with path), modules blacklisted or disabled in `modprobe.d`, the kernel module index, selected sysctls, installed kernels, reboot required | `/proc`, `/lib/modules/<release>`, `modprobe.d`, `/var/lib/dpkg/status`, `/var/run/reboot-required*` |
 | `listeners` | `listeners` | Listening TCP and bound UDP sockets, also inside containers, with process name, executable, package and systemd unit | `/proc/net/*`, `/proc/<pid>/{fd,comm,exe,cgroup,ns/net}` |
 | `packages_in_use` | `packagesInUse` | Packages whose files are mapped by running processes, and processes still running a replaced (upgraded) file | `/proc/<pid>/{maps,exe,comm}` |
+| `package_info` | `packageInfo` | Every installed package with the kinds of entry points it ships (`executable`, `service`, `plugin`, `hook`) and the installed packages it depends on | `/var/lib/dpkg/status`, `/var/lib/dpkg/info/*.list`, `lstat` of the listed files |
 | `services` | `services` | All systemd service units with active, sub and unit file state and package | `systemctl list-units`, `systemctl show` |
 | `virtualization` | `virtualization` | Virtualization or container type | `systemd-detect-virt` |
 
 Packages are resolved with the dpkg file lists (`/var/lib/dpkg/info/*.list`),
 including merged `/usr` and dpkg diversions. On non-dpkg systems the package
-fields, `installedKernels`, `rebootRequired` and `packagesInUse` are omitted.
+fields, `installedKernels`, `rebootRequired`, `packagesInUse` and `packageInfo`
+are omitted.
 Processes with their own root filesystem (containers) are reported with
 process, executable and unit, but never with a host package, and they do not
 count in `packagesInUse`: their paths belong to the container image, not to the
 host's dpkg database. With socket activation (e.g. `ssh.socket`) the listener
 is attributed to the service that inherited the socket, not to systemd.
+
+**Package info.** The server dismisses findings in libraries that nothing on
+the host can use: not loaded by any process for weeks, without programs or
+services of their own, and not needed by any package that has some (typically
+old library versions left behind after upgrades). `packageInfo` supplies the
+"programs or services of their own" and "needed by" parts:
+
+- `entryPoints`: `executable` for files in `bin`/`sbin`/`libexec`
+  directories and any file with an execute, setuid or setgid bit; `service`
+  for systemd units and generators, init scripts, cron jobs, D-Bus activation
+  and autostart files; `plugin` for shared objects outside the standard
+  library directories, NSS modules and Python/Perl/Ruby/Node.js/PHP modules;
+  `hook` for files in directories that make other software run them
+  (`profile.d`, `apt.conf.d`, `pam.d`, udev rules, `ld.so.conf.d`, …).
+  Paths are compared in their `/usr` form, also without merged `/usr`.
+- `depends`: `Depends`, `Pre-Depends` and `Recommends` with all alternatives;
+  virtual packages are replaced by their installed providers, names that are
+  not installed are dropped.
+
+Because the server trusts the absence of entry points and dependencies, the
+collector over-reports when in doubt: a file it cannot inspect counts as
+`executable`. Packages count as installed in every dpkg state in which their
+files may be on disk (`installed`, `half-installed`, `half-configured`,
+`unpacked`, `triggers-*`), whatever the selection (`install`, `hold`, …). The
+list is all or nothing: if the dpkg database or a file list cannot be read, or
+the time budget runs out, `packageInfo` is omitted with an error. Only file
+names and modes are read, never file contents.
 
 **Unknown is not empty.** A collector that cannot run (missing permission,
 missing tool, error, timeout) is omitted and the reason is listed in
@@ -402,8 +431,10 @@ because partial data would look complete.
 
 **Size and performance.** All collectors share the time budget
 `runtime_timeout_seconds`. Lists are capped (2,000 listeners, 3,000 packages
-in use, 2,000 services, 20 processes per package); a capped category is listed
-in `runtime.truncated`. The `runtime` object stays below 1 MB. The kernel
+in use, 6,000 packages in `packageInfo`, 2,000 services, 20 processes per
+package); a capped category is listed in `runtime.truncated`. The `runtime` object stays below 1 MB; if it would
+be larger, the module index lists, then `packageInfo`, then `packagesInUse` are
+left out (with an entry in `errors`). The kernel
 module index (several thousand lines) is sent in full only when it changed,
 when the server has not yet accepted it, or once every 24 hours; otherwise only
 its hash is sent. The hash of the accepted index is stored in

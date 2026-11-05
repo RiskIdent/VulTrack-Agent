@@ -1,5 +1,6 @@
 // Package runtimefacts collects runtime facts about the host (kernel modules,
-// listening sockets, packages in use, systemd services, virtualization) for
+// listening sockets, packages in use, package entry points and dependencies,
+// systemd services, virtualization) for
 // the optional "runtime" object of the agent report.
 //
 // The backend uses these facts to dismiss vulnerability findings
@@ -33,6 +34,7 @@ const (
 	CollectorKernel         = "kernel"
 	CollectorListeners      = "listeners"
 	CollectorPackagesInUse  = "packages_in_use"
+	CollectorPackageInfo    = "package_info"
 	CollectorServices       = "services"
 	CollectorVirtualization = "virtualization"
 )
@@ -42,6 +44,7 @@ var AllCollectors = []string{
 	CollectorKernel,
 	CollectorListeners,
 	CollectorPackagesInUse,
+	CollectorPackageInfo,
 	CollectorServices,
 	CollectorVirtualization,
 }
@@ -51,6 +54,7 @@ const (
 	categoryKernel         = "kernel"
 	categoryListeners      = "listeners"
 	categoryPackagesInUse  = "packagesInUse"
+	categoryPackageInfo    = "packageInfo"
 	categoryServices       = "services"
 	categoryVirtualization = "virtualization"
 )
@@ -60,6 +64,7 @@ var categoryOf = map[string]string{
 	CollectorKernel:         categoryKernel,
 	CollectorListeners:      categoryListeners,
 	CollectorPackagesInUse:  categoryPackagesInUse,
+	CollectorPackageInfo:    categoryPackageInfo,
 	CollectorServices:       categoryServices,
 	CollectorVirtualization: categoryVirtualization,
 }
@@ -69,6 +74,7 @@ var (
 	maxRuntimeBytes     = 1 << 20
 	maxListeners        = 2000
 	maxPackagesInUse    = 3000
+	maxPackageInfo      = 6000
 	maxServices         = 2000
 	maxProcessesPerPkg  = 20
 	errInsufficientPriv = "insufficient privileges"
@@ -85,6 +91,7 @@ type Runtime struct {
 	Kernel         *Kernel          `json:"kernel,omitempty"`
 	Listeners      *[]Listener      `json:"listeners,omitempty"`
 	PackagesInUse  *[]PackageInUse  `json:"packagesInUse,omitempty"`
+	PackageInfo    *[]PackageInfo   `json:"packageInfo,omitempty"`
 	Services       *[]Service       `json:"services,omitempty"`
 	Virtualization string           `json:"virtualization,omitempty"`
 	Errors         []CollectorError `json:"errors,omitempty"`
@@ -134,6 +141,7 @@ var collectorFuncs = map[string]collectorFunc{
 	CollectorKernel:         collectKernel,
 	CollectorListeners:      collectListeners,
 	CollectorPackagesInUse:  collectPackagesInUse,
+	CollectorPackageInfo:    collectPackageInfo,
 	CollectorServices:       collectServices,
 	CollectorVirtualization: collectVirtualization,
 }
@@ -303,7 +311,7 @@ func (r *Runtime) normalize() {
 
 // Encode serializes the runtime object and enforces the 1 MB limit: first the
 // module index lists are dropped (the hash stays, so the index is retried next
-// time), then packagesInUse is omitted. It returns an error when the object is
+// time), then packageInfo and then packagesInUse are omitted. It returns an error when the object is
 // still too large; the caller must then omit the runtime object entirely.
 func (r *Runtime) Encode() ([]byte, error) {
 	b, err := json.Marshal(r)
@@ -313,6 +321,14 @@ func (r *Runtime) Encode() ([]byte, error) {
 	if len(b) > maxRuntimeBytes && r.Kernel != nil && r.Kernel.ModuleIndex != nil && r.Kernel.ModuleIndex.Available != nil {
 		r.Kernel.ModuleIndex.Available = nil
 		r.Kernel.ModuleIndex.Builtin = nil
+		if b, err = json.Marshal(r); err != nil {
+			return nil, err
+		}
+	}
+	if len(b) > maxRuntimeBytes && r.PackageInfo != nil {
+		r.PackageInfo = nil
+		r.addError(categoryPackageInfo, "omitted: runtime object exceeds the size limit")
+		r.normalize()
 		if b, err = json.Marshal(r); err != nil {
 			return nil, err
 		}

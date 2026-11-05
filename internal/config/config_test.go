@@ -281,7 +281,7 @@ func TestRuntimeDefaults(t *testing.T) {
 	if !cfg.CollectRuntime {
 		t.Error("collect_runtime should default to true")
 	}
-	want := []string{"kernel", "listeners", "packages_in_use", "services", "virtualization"}
+	want := []string{"kernel", "listeners", "packages_in_use", "package_info", "services", "virtualization"}
 	if !reflect.DeepEqual(cfg.RuntimeCollectors, want) {
 		t.Errorf("runtime_collectors: got %v, want %v", cfg.RuntimeCollectors, want)
 	}

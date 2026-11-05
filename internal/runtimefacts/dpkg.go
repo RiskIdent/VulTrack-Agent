@@ -28,6 +28,12 @@ type dpkgIndex struct {
 	divertedTo map[string]string
 	// merged lists the top-level directories that are symlinks into /usr.
 	merged map[string]bool
+	// files maps a package name (without architecture) to the paths of all
+	// its file lists, in list order. A package with an (empty) list has a
+	// non-nil entry.
+	files map[string][]string
+	// diversions maps a diverted original path to its diversion.
+	diversions map[string]diversion
 }
 
 type diversion struct {
@@ -42,6 +48,8 @@ func buildDpkgIndex(e *env) (*dpkgIndex, error) {
 		diverted:   map[string]string{},
 		divertedTo: map[string]string{},
 		merged:     map[string]bool{},
+		files:      map[string][]string{},
+		diversions: map[string]diversion{},
 	}
 
 	divs, err := readDiversions(e.path("/var/lib/dpkg/diversions"))
@@ -52,6 +60,7 @@ func buildDpkgIndex(e *env) (*dpkgIndex, error) {
 	listers := map[string][]string{}
 	for _, d := range divs {
 		listers[d.from] = nil
+		idx.diversions[d.from] = d
 	}
 
 	lists, err := filepath.Glob(e.path("/var/lib/dpkg/info") + "/*.list")
@@ -119,6 +128,10 @@ func (idx *dpkgIndex) readList(file, pkg string, listers map[string][]string) er
 		return err
 	}
 	defer f.Close()
+	files := idx.files[pkg]
+	if files == nil {
+		files = []string{}
+	}
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 64*1024), 1024*1024)
 	for sc.Scan() {
@@ -126,6 +139,7 @@ func (idx *dpkgIndex) readList(file, pkg string, listers map[string][]string) er
 		if p == "" || p == "/." {
 			continue
 		}
+		files = append(files, p)
 		if l, ok := listers[p]; ok {
 			listers[p] = append(l, pkg)
 		}
@@ -135,6 +149,7 @@ func (idx *dpkgIndex) readList(file, pkg string, listers map[string][]string) er
 		}
 		idx.owners[p] = pkg
 	}
+	idx.files[pkg] = files
 	return sc.Err()
 }
 
