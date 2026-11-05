@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -272,5 +273,96 @@ func TestEnsureRefreshTokenDir(t *testing.T) {
 	}
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
 		t.Error("directory was not created")
+	}
+}
+
+func TestRuntimeDefaults(t *testing.T) {
+	cfg := DefaultConfig()
+	if !cfg.CollectRuntime {
+		t.Error("collect_runtime should default to true")
+	}
+	want := []string{"kernel", "listeners", "packages_in_use", "services", "virtualization"}
+	if !reflect.DeepEqual(cfg.RuntimeCollectors, want) {
+		t.Errorf("runtime_collectors: got %v, want %v", cfg.RuntimeCollectors, want)
+	}
+	if cfg.RuntimeTimeoutSeconds != 20 {
+		t.Errorf("runtime_timeout_seconds: got %d", cfg.RuntimeTimeoutSeconds)
+	}
+	if cfg.ModuleIndexStateFile != "/var/lib/vultrack-agent/module-index.sha256" {
+		t.Errorf("module_index_state_file: got %q", cfg.ModuleIndexStateFile)
+	}
+}
+
+func TestRuntimeFromFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	content := `server_url: https://example.com
+collect_runtime: false
+runtime_collectors: [kernel, services]
+runtime_timeout_seconds: 5
+module_index_state_file: /tmp/idx.sha256
+`
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.CollectRuntime || cfg.RuntimeTimeoutSeconds != 5 || cfg.ModuleIndexStateFile != "/tmp/idx.sha256" {
+		t.Errorf("unexpected config: %+v", cfg)
+	}
+	if want := []string{"kernel", "services"}; !reflect.DeepEqual(cfg.RuntimeCollectors, want) {
+		t.Errorf("runtime_collectors: got %v, want %v (the list must replace the default)", cfg.RuntimeCollectors, want)
+	}
+}
+
+func TestRuntimeFromEnv(t *testing.T) {
+	t.Setenv("VULTRACK_SERVER_URL", "https://example.com")
+	t.Setenv("VULTRACK_COLLECT_RUNTIME", "false")
+	t.Setenv("VULTRACK_RUNTIME_COLLECTORS", "kernel, listeners")
+	t.Setenv("VULTRACK_RUNTIME_TIMEOUT_SECONDS", "7")
+	t.Setenv("VULTRACK_MODULE_INDEX_STATE_FILE", "/tmp/env-idx")
+	cfg, err := LoadConfig("", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.CollectRuntime || cfg.RuntimeTimeoutSeconds != 7 || cfg.ModuleIndexStateFile != "/tmp/env-idx" {
+		t.Errorf("unexpected config: %+v", cfg)
+	}
+	if want := []string{"kernel", "listeners"}; !reflect.DeepEqual(cfg.RuntimeCollectors, want) {
+		t.Errorf("runtime_collectors: got %v, want %v", cfg.RuntimeCollectors, want)
+	}
+}
+
+func TestRuntimeValidation(t *testing.T) {
+	base := func() *Config {
+		cfg := DefaultConfig()
+		cfg.ServerURL = "https://example.com"
+		return cfg
+	}
+	if err := base().Validate(); err != nil {
+		t.Fatalf("defaults should be valid: %v", err)
+	}
+
+	cfg := base()
+	cfg.RuntimeCollectors = []string{"kernel", "packagesInUse"}
+	if err := cfg.Validate(); err == nil {
+		t.Error("unknown collector should be rejected")
+	}
+	cfg.CollectRuntime = false
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("runtime settings are not checked when collection is disabled: %v", err)
+	}
+
+	cfg = base()
+	cfg.RuntimeTimeoutSeconds = 0
+	if err := cfg.Validate(); err == nil {
+		t.Error("zero timeout should be rejected")
+	}
+
+	cfg = base()
+	cfg.ModuleIndexStateFile = ""
+	if err := cfg.Validate(); err == nil {
+		t.Error("empty state file should be rejected")
 	}
 }

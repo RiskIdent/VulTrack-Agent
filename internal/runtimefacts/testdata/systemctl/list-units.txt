@@ -1,0 +1,6 @@
+nginx.service                      loaded active   running A high performance web server
+ssh.service                        loaded active   running OpenBSD Secure Shell server
+systemd-resolved.service           loaded active   running Network Name Resolution
+● failed-thing.service             loaded failed   failed  Something that failed
+getty@tty1.service                 loaded active   running Getty on tty1
+legacy.service                     not-found inactive dead legacy.service

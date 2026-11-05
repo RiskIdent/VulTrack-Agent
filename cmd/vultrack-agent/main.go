@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"github.com/vultrack/vultrack-agent/internal/api"
 	"github.com/vultrack/vultrack-agent/internal/collector"
 	"github.com/vultrack/vultrack-agent/internal/config"
+	"github.com/vultrack/vultrack-agent/internal/runtimefacts"
 )
 
 var (
@@ -182,24 +184,12 @@ func runReport(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to obtain valid token: %w", err)
 	}
 
+	report, indexHash := prepareReport(cfg, sysInfo, packages, true)
+
 	// Send report
 	logInfo("Sending report to %s...", cfg.ServerURL)
-	resp, err := sendReport(client, sysInfo, packages)
+	resp, err := submitReport(cfg, client, sysInfo.Hostname, report, indexHash)
 	if err != nil {
-		if apiErr, ok := err.(*api.APIError); ok && apiErr.StatusCode == 401 {
-			// Server rejected the token (e.g. after backend restart) — force a
-			// real refresh by clearing the in-memory token before retrying.
-			client.InvalidateAccessToken()
-			if rfErr := client.EnsureValidToken(sysInfo.Hostname); rfErr != nil {
-				return fmt.Errorf("token refresh failed: %w", rfErr)
-			}
-			resp, err = sendReport(client, sysInfo, packages)
-		}
-	}
-	if err != nil {
-		if apiErr, ok := err.(*api.APIError); ok && apiErr.StatusCode == 403 {
-			logError("Access denied. Agent may be pending approval or revoked.")
-		}
 		return fmt.Errorf("report failed: %w", err)
 	}
 
@@ -223,6 +213,14 @@ func init() {
 }
 
 func runExport(cmd *cobra.Command, args []string) error {
+	// Export works without a server configuration; the runtime settings fall
+	// back to their defaults if the config cannot be loaded.
+	cfg, err := config.LoadConfig(configPath, flagOverrides)
+	if err != nil {
+		logInfo("Config not usable (%v); using default runtime settings", err)
+		cfg = config.DefaultConfig()
+	}
+
 	// Collect data
 	logInfo("Collecting system information...")
 	sysInfo, err := collector.CollectSystemInfo()
@@ -238,31 +236,9 @@ func runExport(cmd *cobra.Command, args []string) error {
 
 	logInfo("Collected %d packages", len(packages))
 
-	// Convert packages
-	apiPackages := make([]api.Package, len(packages))
-	for i, pkg := range packages {
-		apiPackages[i] = api.Package{
-			Name:    pkg.Name,
-			Version: pkg.Version,
-			Arch:    pkg.Arch,
-			Source:  pkg.Source,
-		}
-	}
-
-	// Create report request
-	report := &api.ReportRequest{
-		Hostname:       sysInfo.Hostname,
-		AgentVersion:   version,
-		OSFamily:       sysInfo.OSFamily,
-		OSRelease:      sysInfo.OSRelease,
-		OSCodename:     sysInfo.OSCodename,
-		Kernel:         sysInfo.Kernel,
-		Arch:           sysInfo.Arch,
-		PackageManager: sysInfo.PackageManager,
-		IPv4Addrs:      sysInfo.IPv4Addrs,
-		ReportedAt:     time.Now().UTC().Format(time.RFC3339),
-		Packages:       apiPackages,
-	}
+	// The export always contains the full module index and never touches the
+	// module index state file.
+	report, _ := prepareReport(cfg, sysInfo, packages, false)
 
 	// Marshal to JSON with indentation
 	jsonData, err := json.MarshalIndent(report, "", "  ")
@@ -310,7 +286,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 	logInfo("Press Ctrl+C to stop")
 
 	// Send initial report
-	if err := runReportCycle(client); err != nil {
+	if err := runReportCycle(cfg, client); err != nil {
 		logError("Initial report failed: %v", err)
 	}
 
@@ -325,7 +301,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			logInfo("Received shutdown signal, stopping...")
 			return nil
 		case <-ticker.C:
-			if err := runReportCycle(client); err != nil {
+			if err := runReportCycle(cfg, client); err != nil {
 				logError("Report failed: %v", err)
 			}
 		}
@@ -333,7 +309,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 }
 
 // runReportCycle runs one full report cycle: ensure valid token, collect, send.
-func runReportCycle(client *api.Client) error {
+func runReportCycle(cfg *config.Config, client *api.Client) error {
 	// Collect system info first so we have the hostname for (re-)enrollment
 	sysInfo, err := collector.CollectSystemInfo()
 	if err != nil {
@@ -350,23 +326,11 @@ func runReportCycle(client *api.Client) error {
 		return err
 	}
 
+	report, indexHash := prepareReport(cfg, sysInfo, packages, true)
+
 	logInfo("Sending report (%d packages)...", len(packages))
-	resp, err := sendReport(client, sysInfo, packages)
+	resp, err := submitReport(cfg, client, sysInfo.Hostname, report, indexHash)
 	if err != nil {
-		if apiErr, ok := err.(*api.APIError); ok && apiErr.StatusCode == 401 {
-			// Server rejected the token (e.g. after backend restart) — force a
-			// real refresh by clearing the in-memory token before retrying.
-			client.InvalidateAccessToken()
-			if rfErr := client.EnsureValidToken(sysInfo.Hostname); rfErr != nil {
-				return fmt.Errorf("token refresh failed: %w", rfErr)
-			}
-			resp, err = sendReport(client, sysInfo, packages)
-		}
-	}
-	if err != nil {
-		if apiErr, ok := err.(*api.APIError); ok && apiErr.StatusCode == 403 {
-			logError("Access denied. Agent may be pending approval or revoked.")
-		}
 		return err
 	}
 
@@ -374,8 +338,14 @@ func runReportCycle(client *api.Client) error {
 	return nil
 }
 
-// sendReport builds the report request from collected data and sends it.
-func sendReport(client *api.Client, sysInfo *collector.SystemInfo, packages []collector.Package) (*api.ReportResponse, error) {
+// maxReportBytes keeps the request body well below the backend limit (4 MB).
+const maxReportBytes = 3 << 20
+
+// prepareReport builds the report request from the collected data and, if
+// enabled, the runtime facts. useState applies the module index state file
+// (send only the hash of an unchanged index). It returns the module index
+// hash to store once the server has accepted the report ("" for none).
+func prepareReport(cfg *config.Config, sysInfo *collector.SystemInfo, packages []collector.Package, useState bool) (*api.ReportRequest, string) {
 	apiPackages := make([]api.Package, len(packages))
 	for i, pkg := range packages {
 		apiPackages[i] = api.Package{
@@ -400,7 +370,71 @@ func sendReport(client *api.Client, sysInfo *collector.SystemInfo, packages []co
 		Packages:       apiPackages,
 	}
 
-	return client.Report(report)
+	if !cfg.CollectRuntime {
+		return report, ""
+	}
+	runtime, indexHash := collectRuntime(cfg, sysInfo.PackageManager, useState)
+	if runtime == nil {
+		return report, ""
+	}
+	report.Runtime = runtime
+
+	// Without runtime the backend treats every category as unknown, which is
+	// safe; an oversized body would be rejected as a whole.
+	if body, err := json.Marshal(report); err != nil || len(body) > maxReportBytes {
+		logError("Report would exceed %d bytes with runtime facts; sending it without them", maxReportBytes)
+		report.Runtime = nil
+		return report, ""
+	}
+	return report, indexHash
+}
+
+// collectRuntime collects and encodes the runtime facts. It never fails the
+// report: on error it returns nil and the report goes out without them.
+func collectRuntime(cfg *config.Config, packageManager string, useState bool) (json.RawMessage, string) {
+	logInfo("Collecting runtime facts...")
+	rt := runtimefacts.Collect(context.Background(), runtimefacts.Options{
+		Collectors:     cfg.RuntimeCollectors,
+		Timeout:        time.Duration(cfg.RuntimeTimeoutSeconds) * time.Second,
+		PackageManager: packageManager,
+	})
+	if useState {
+		runtimefacts.ApplyModuleIndexState(rt, cfg.ModuleIndexStateFile, time.Now())
+	}
+	data, err := rt.Encode()
+	if err != nil {
+		logError("Runtime facts omitted: %v", err)
+		return nil, ""
+	}
+	for _, e := range rt.Errors {
+		logInfo("Runtime facts: %s not collected: %s", e.Collector, e.Error)
+	}
+	return data, rt.FullModuleIndexHash()
+}
+
+// submitReport sends the report. If the server rejects the access token
+// (e.g. after a backend restart), it forces a real token refresh and retries
+// once. Only after the server accepted the report is the module index state
+// file updated, so a failed report sends the full index again next time.
+func submitReport(cfg *config.Config, client *api.Client, hostname string, report *api.ReportRequest, indexHash string) (*api.ReportResponse, error) {
+	resp, err := client.Report(report)
+	if apiErr, ok := err.(*api.APIError); ok && apiErr.StatusCode == 401 {
+		client.InvalidateAccessToken()
+		if rfErr := client.EnsureValidToken(hostname); rfErr != nil {
+			return nil, fmt.Errorf("token refresh failed: %w", rfErr)
+		}
+		resp, err = client.Report(report)
+	}
+	if err != nil {
+		if apiErr, ok := err.(*api.APIError); ok && apiErr.StatusCode == 403 {
+			logError("Access denied. Agent may be pending approval or revoked.")
+		}
+		return nil, err
+	}
+	if err := runtimefacts.SaveModuleIndexState(cfg.ModuleIndexStateFile, indexHash); err != nil {
+		logError("%v", err)
+	}
+	return resp, nil
 }
 
 var statusCmd = &cobra.Command{

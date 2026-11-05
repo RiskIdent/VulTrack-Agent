@@ -1,0 +1,258 @@
+{
+  "schemaVersion": 1,
+  "collectedAt": "2026-11-05T10:00:03Z",
+  "kernel": {
+    "release": "6.8.0-124-generic",
+    "modulesDisabled": false,
+    "loadedModules": [
+      {
+        "name": "ath9k",
+        "path": "kernel/drivers/net/wireless/ath/ath9k/ath9k.ko.zst"
+      },
+      {
+        "name": "nf_tables",
+        "path": "kernel/net/netfilter/nf_tables.ko.zst"
+      },
+      {
+        "name": "out_of_tree"
+      },
+      {
+        "name": "snd_hda_intel",
+        "path": "kernel/sound/pci/hda/snd-hda-intel.ko.zst"
+      }
+    ],
+    "blacklistedModules": [
+      {
+        "name": "cramfs",
+        "installCommand": "/bin/false"
+      },
+      {
+        "name": "evbug"
+      },
+      {
+        "name": "freevxfs",
+        "installCommand": "/usr/bin/true"
+      },
+      {
+        "name": "kept_by_override"
+      },
+      {
+        "name": "pcspkr"
+      },
+      {
+        "name": "udf",
+        "installCommand": "/bin/false"
+      }
+    ],
+    "moduleIndex": {
+      "hash": "sha256:168c290b55b60bb134452b95c4f5b6904f2fb2fdd22f4beb29b38753fab2ecbe",
+      "available": [
+        "kernel/arch/x86/crypto/aesni-intel.ko.zst",
+        "kernel/drivers/net/wireless/ath/ath9k/ath9k.ko.zst",
+        "kernel/drivers/net/wireless/ath/ath9k/ath9k_hw.ko.zst",
+        "kernel/fs/cramfs/cramfs.ko.zst",
+        "kernel/net/netfilter/nf_tables.ko.zst",
+        "kernel/sound/pci/hda/snd-hda-codec.ko.zst",
+        "kernel/sound/pci/hda/snd-hda-intel.ko.zst"
+      ],
+      "builtin": [
+        "kernel/crypto/sha256_generic.ko",
+        "kernel/fs/ext4/ext4.ko"
+      ]
+    },
+    "sysctls": {
+      "kernel.apparmor_restrict_unprivileged_userns": "1",
+      "kernel.kptr_restrict": "1",
+      "kernel.modules_disabled": "0",
+      "kernel.unprivileged_bpf_disabled": "2",
+      "kernel.unprivileged_userns_clone": "1",
+      "kernel.yama.ptrace_scope": "1",
+      "user.max_user_namespaces": "63408"
+    },
+    "installedKernels": [
+      "6.8.0-121-generic",
+      "6.8.0-124-generic"
+    ],
+    "rebootRequired": true,
+    "rebootRequiredPackages": [
+      "linux-base",
+      "linux-image-6.8.0-124-generic"
+    ]
+  },
+  "listeners": [
+    {
+      "protocol": "tcp",
+      "address": "0.0.0.0",
+      "port": 22,
+      "process": "sshd",
+      "exe": "/usr/sbin/sshd",
+      "package": "openssh-server",
+      "unit": "ssh.service",
+      "hostNetns": true
+    },
+    {
+      "protocol": "tcp",
+      "address": "0.0.0.0",
+      "port": 80,
+      "process": "nginx",
+      "exe": "/usr/sbin/nginx",
+      "package": "nginx-core",
+      "unit": "nginx.service",
+      "hostNetns": true
+    },
+    {
+      "protocol": "tcp",
+      "address": "0.0.0.0",
+      "port": 8080,
+      "process": "python3",
+      "exe": "/usr/bin/python3.12",
+      "unit": "docker-0123abcd.scope",
+      "hostNetns": false
+    },
+    {
+      "protocol": "tcp",
+      "address": "127.0.0.53",
+      "port": 53,
+      "process": "systemd-resolve",
+      "exe": "/usr/lib/systemd/systemd-resolved",
+      "package": "systemd",
+      "unit": "systemd-resolved.service",
+      "hostNetns": true
+    },
+    {
+      "protocol": "tcp6",
+      "address": "2001:db8::1",
+      "port": 443,
+      "process": "nginx",
+      "exe": "/usr/sbin/nginx",
+      "package": "nginx-core",
+      "unit": "nginx.service",
+      "hostNetns": true
+    },
+    {
+      "protocol": "tcp6",
+      "address": "::",
+      "port": 22,
+      "process": "sshd",
+      "exe": "/usr/sbin/sshd",
+      "package": "openssh-server",
+      "unit": "ssh.service",
+      "hostNetns": true
+    },
+    {
+      "protocol": "tcp6",
+      "address": "::1",
+      "port": 631,
+      "hostNetns": true
+    },
+    {
+      "protocol": "tcp6",
+      "address": "::ffff:127.0.0.1",
+      "port": 9000,
+      "hostNetns": true
+    },
+    {
+      "protocol": "udp",
+      "address": "0.0.0.0",
+      "port": 68,
+      "process": "dhclient",
+      "exe": "/usr/sbin/dhclient (deleted)",
+      "unit": "dhclient.service",
+      "hostNetns": true
+    },
+    {
+      "protocol": "udp",
+      "address": "127.0.0.53",
+      "port": 53,
+      "process": "systemd-resolve",
+      "exe": "/usr/lib/systemd/systemd-resolved",
+      "package": "systemd",
+      "unit": "systemd-resolved.service",
+      "hostNetns": true
+    }
+  ],
+  "packagesInUse": [
+    {
+      "package": "libc6",
+      "processes": [
+        "dhclient",
+        "nginx",
+        "python3",
+        "sshd",
+        "systemd",
+        "systemd-resolve"
+      ]
+    },
+    {
+      "package": "libssl3t64",
+      "processes": [
+        "nginx",
+        "sshd"
+      ],
+      "staleProcesses": [
+        "nginx"
+      ]
+    },
+    {
+      "package": "nginx-core",
+      "processes": [
+        "nginx"
+      ]
+    },
+    {
+      "package": "openssh-server",
+      "processes": [
+        "sshd"
+      ]
+    },
+    {
+      "package": "systemd",
+      "processes": [
+        "systemd",
+        "systemd-resolve"
+      ]
+    }
+  ],
+  "services": [
+    {
+      "unit": "failed-thing.service",
+      "activeState": "failed",
+      "subState": "failed",
+      "unitFileState": "disabled"
+    },
+    {
+      "unit": "getty@tty1.service",
+      "activeState": "active",
+      "subState": "running",
+      "unitFileState": "enabled",
+      "package": "systemd"
+    },
+    {
+      "unit": "legacy.service",
+      "activeState": "inactive",
+      "subState": "dead"
+    },
+    {
+      "unit": "nginx.service",
+      "activeState": "active",
+      "subState": "running",
+      "unitFileState": "enabled",
+      "package": "nginx-common"
+    },
+    {
+      "unit": "ssh.service",
+      "activeState": "active",
+      "subState": "running",
+      "unitFileState": "enabled",
+      "package": "openssh-server"
+    },
+    {
+      "unit": "systemd-resolved.service",
+      "activeState": "active",
+      "subState": "running",
+      "unitFileState": "enabled",
+      "package": "systemd"
+    }
+  ],
+  "virtualization": "kvm"
+}

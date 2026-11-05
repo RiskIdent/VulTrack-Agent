@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/vultrack/vultrack-agent/internal/runtimefacts"
 	"go.yaml.in/yaml/v4"
 )
 
@@ -23,6 +25,12 @@ type Config struct {
 	LogFile          string        `yaml:"log_file" env:"VULTRACK_LOG_FILE"`
 	Insecure         bool          `yaml:"insecure" env:"VULTRACK_INSECURE"`
 	CACert           string        `yaml:"ca_cert" env:"VULTRACK_CA_CERT"`
+
+	// Runtime facts (see README, "Runtime Facts").
+	CollectRuntime        bool     `yaml:"collect_runtime" env:"VULTRACK_COLLECT_RUNTIME"`
+	RuntimeCollectors     []string `yaml:"runtime_collectors" env:"VULTRACK_RUNTIME_COLLECTORS"`
+	RuntimeTimeoutSeconds int      `yaml:"runtime_timeout_seconds" env:"VULTRACK_RUNTIME_TIMEOUT_SECONDS"`
+	ModuleIndexStateFile  string   `yaml:"module_index_state_file" env:"VULTRACK_MODULE_INDEX_STATE_FILE"`
 }
 
 // DefaultConfig returns a config with default values
@@ -33,6 +41,11 @@ func DefaultConfig() *Config {
 		LogLevel:         "info",
 		LogFile:          "",
 		Insecure:         false,
+
+		CollectRuntime:        true,
+		RuntimeCollectors:     append([]string(nil), runtimefacts.AllCollectors...),
+		RuntimeTimeoutSeconds: 20,
+		ModuleIndexStateFile:  "/var/lib/vultrack-agent/module-index.sha256",
 	}
 }
 
@@ -116,6 +129,31 @@ func (c *Config) LoadFromEnv() {
 	if val := os.Getenv("VULTRACK_CA_CERT"); val != "" {
 		c.CACert = val
 	}
+	if val := os.Getenv("VULTRACK_COLLECT_RUNTIME"); val != "" {
+		c.CollectRuntime = val == "true" || val == "1"
+	}
+	if val, ok := os.LookupEnv("VULTRACK_RUNTIME_COLLECTORS"); ok {
+		c.RuntimeCollectors = splitList(val)
+	}
+	if val := os.Getenv("VULTRACK_RUNTIME_TIMEOUT_SECONDS"); val != "" {
+		if n, err := strconv.Atoi(val); err == nil {
+			c.RuntimeTimeoutSeconds = n
+		}
+	}
+	if val := os.Getenv("VULTRACK_MODULE_INDEX_STATE_FILE"); val != "" {
+		c.ModuleIndexStateFile = val
+	}
+}
+
+// splitList splits a comma-separated list, dropping empty elements.
+func splitList(s string) []string {
+	out := []string{}
+	for _, part := range strings.Split(s, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }
 
 // Validate validates the configuration
@@ -137,6 +175,19 @@ func (c *Config) Validate() error {
 	validLogLevels := map[string]bool{"debug": true, "info": true, "warn": true, "error": true}
 	if !validLogLevels[strings.ToLower(c.LogLevel)] {
 		return fmt.Errorf("log_level must be one of: debug, info, warn, error")
+	}
+	if c.CollectRuntime {
+		for _, name := range c.RuntimeCollectors {
+			if !runtimefacts.ValidCollector(name) {
+				return fmt.Errorf("runtime_collectors: unknown collector %q (valid: %s)", name, strings.Join(runtimefacts.AllCollectors, ", "))
+			}
+		}
+		if c.RuntimeTimeoutSeconds <= 0 {
+			return fmt.Errorf("runtime_timeout_seconds must be positive")
+		}
+		if c.ModuleIndexStateFile == "" {
+			return fmt.Errorf("module_index_state_file is required when collect_runtime is enabled")
+		}
 	}
 	return nil
 }

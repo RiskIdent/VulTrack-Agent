@@ -1,0 +1,7 @@
+kernel/drivers/net/wireless/ath/ath9k/ath9k.ko.zst: kernel/drivers/net/wireless/ath/ath9k/ath9k_hw.ko.zst
+kernel/drivers/net/wireless/ath/ath9k/ath9k_hw.ko.zst:
+kernel/sound/pci/hda/snd-hda-intel.ko.zst: kernel/sound/pci/hda/snd-hda-codec.ko.zst
+kernel/sound/pci/hda/snd-hda-codec.ko.zst:
+kernel/net/netfilter/nf_tables.ko.zst:
+kernel/fs/cramfs/cramfs.ko.zst:
+kernel/arch/x86/crypto/aesni-intel.ko.zst:

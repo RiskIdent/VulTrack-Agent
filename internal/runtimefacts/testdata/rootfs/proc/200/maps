@@ -1,0 +1,6 @@
+7f0000000000-7f0000001000 r-xp 00000000 fd:01 1234                    /usr/sbin/nginx
+7f0000000000-7f0000001000 r-xp 00000000 fd:01 777                    /usr/lib/x86_64-linux-gnu/libssl.so.3 (deleted)
+7f0000000000-7f0000001000 r-xp 00000000 fd:01 1234                    /usr/lib/x86_64-linux-gnu/libc.so.6
+7f0000000000-7f0000001000 r-xp 00000000 fd:01 1234                    /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2
+7f0000002000-7f0000003000 rw-p 00000000 00:00 0 
+7ffd00000000-7ffd00021000 rw-p 00000000 00:00 0                          [stack]

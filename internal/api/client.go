@@ -63,6 +63,8 @@ type ReportRequest struct {
 	IPv4Addrs      []string  `json:"ipv4Addrs"`
 	ReportedAt     string    `json:"reportedAt,omitempty"`
 	Packages       []Package `json:"packages"`
+	// Runtime is the optional, pre-encoded runtime facts object.
+	Runtime json.RawMessage `json:"runtime,omitempty"`
 }
 
 // Package represents a package in the report
