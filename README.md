@@ -411,7 +411,7 @@ vultrack-agent/
 
 ### Build Requirements
 
-- Go 1.21 or higher
+- Go 1.26 or higher
 - `dpkg-deb` for creating Debian packages (`apt install dpkg-dev`)
 
 ---

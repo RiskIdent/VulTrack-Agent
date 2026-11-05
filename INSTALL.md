@@ -88,7 +88,7 @@ git tag v1.0.0
 
 ### Requirements
 
-- Go 1.21 or higher
+- Go 1.26 or higher
 - `dpkg-deb` for Debian packages (`apt install dpkg-dev`)
 
 ### Creating Releases
