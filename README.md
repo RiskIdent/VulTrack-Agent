@@ -503,8 +503,19 @@ The agent manages token renewal automatically:
 
 1. If a valid access token is in memory — use it directly.
 2. If the access token is absent or expired — exchange the refresh token for a new pair.
-3. If the refresh token is rejected (401) — re-enroll automatically using `enrollment_key`.
-4. After enrollment, if the agent status is `pending` — wait for admin approval before reporting.
+3. If the refresh token is rejected (401) — re-enroll automatically using `enrollment_key`,
+   unless the agent is waiting for approval (see below).
+4. If the registration is `pending` — keep the tokens and wait for admin approval;
+   the agent tries again every cycle and starts reporting once it is approved.
+5. If the registration was revoked by an administrator (403 `agent_revoked`) — do
+   nothing; the agent does not re-enroll on its own.
+
+**Server compatibility.** The server signals a pending or revoked registration
+with `403` and a `code` of `agent_pending` or `agent_revoked`. Older servers answer
+`401` instead, which the agent cannot tell apart from an invalid token. With such
+a server the agent avoids a re-enrollment loop while it knows it is pending, but
+the daemon re-enrolls once after a restart, and a revoked agent re-enrolls (and is
+active again at once if its enrollment key auto-approves).
 
 This is why **`enrollment_key` must remain permanently in the config** — it enables
 fully autonomous recovery without manual intervention.
@@ -517,9 +528,11 @@ fully autonomous recovery without manual intervention.
 |---|---|
 | Network error or `5xx` | Retry up to 3 times with exponential backoff (1s, 2s, 4s) |
 | `401` on report | Refresh access token and retry once |
-| `401` on token refresh | Re-enroll with `force=true` using `enrollment_key` |
+| `401` on token refresh | Re-enroll with `force=true` using `enrollment_key` (not while pending approval) |
 | `401` on enrollment | Enrollment key invalid — log error and exit |
-| `403 Forbidden` | Agent pending approval or revoked — no retry |
+| `403` with `agent_pending` | Waiting for approval — logged as information, retried next cycle, never re-enrolls |
+| `403` with `agent_revoked` | Revoked by an administrator — logged as error, never re-enrolls |
+| other `403` | Access denied — logged as error, no retry |
 | `409 Conflict` on enroll | Hostname already registered — use `--force` to re-enroll |
 
 ---

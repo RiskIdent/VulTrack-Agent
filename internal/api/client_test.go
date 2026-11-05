@@ -2,6 +2,8 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -711,4 +713,184 @@ func TestTokenPrefix(t *testing.T) {
 // an access token that has not yet expired.
 func futureTime() time.Time {
 	return time.Now().Add(24 * time.Hour)
+}
+
+// --- Pending approval and revocation ---
+
+// fakeServer records calls and answers enroll/token/report with the given
+// handlers' status and body.
+type fakeServer struct {
+	enrollCalls, tokenCalls, reportCalls int
+	enrollStatus                         string // "active" or "pending"
+	tokenStatus, reportStatus            int
+	tokenBody, reportBody                string
+}
+
+func (f *fakeServer) handler(t *testing.T) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v2/agent/enroll":
+			f.enrollCalls++
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(EnrollmentResponse{
+				AccessToken: "at", RefreshToken: "rt_enrolled", ExpiresIn: 3600, Status: f.enrollStatus,
+			})
+		case "/api/v2/agent/token":
+			f.tokenCalls++
+			if f.tokenStatus != 0 && f.tokenStatus != http.StatusOK {
+				w.WriteHeader(f.tokenStatus)
+				w.Write([]byte(f.tokenBody))
+				return
+			}
+			json.NewEncoder(w).Encode(TokenRefreshResponse{AccessToken: "at2", RefreshToken: "rt_rotated", ExpiresIn: 3600})
+		case "/api/v2/agent/report":
+			f.reportCalls++
+			if f.reportStatus != 0 && f.reportStatus != http.StatusOK {
+				w.WriteHeader(f.reportStatus)
+				w.Write([]byte(f.reportBody))
+				return
+			}
+			w.Write([]byte(`{"serverId":1,"packageCount":0}`))
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+	}
+}
+
+func newFakeClient(t *testing.T, f *fakeServer, refreshToken string) (*Client, string) {
+	t.Helper()
+	srv := httptest.NewServer(f.handler(t))
+	t.Cleanup(srv.Close)
+	rtFile := filepath.Join(t.TempDir(), "refresh.token")
+	if refreshToken != "" {
+		if err := os.WriteFile(rtFile, []byte(refreshToken), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	c, err := NewClient(srv.URL, true, "", "enroll_key", rtFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c, rtFile
+}
+
+func TestEnsureValidToken_Pending403_NoReEnroll(t *testing.T) {
+	f := &fakeServer{tokenStatus: http.StatusForbidden, tokenBody: `{"code":"agent_pending","error":"Agent is pending approval"}`}
+	c, rtFile := newFakeClient(t, f, "rt_existing")
+
+	err := c.EnsureValidToken("host")
+	if !errors.Is(err, ErrPendingApproval) {
+		t.Fatalf("err = %v, want ErrPendingApproval", err)
+	}
+	if f.enrollCalls != 0 {
+		t.Errorf("enroll called %d times, want 0", f.enrollCalls)
+	}
+	if data, _ := os.ReadFile(rtFile); string(data) != "rt_existing" {
+		t.Errorf("refresh token changed to %q", data)
+	}
+}
+
+func TestEnsureValidToken_Revoked403_NoReEnroll(t *testing.T) {
+	f := &fakeServer{tokenStatus: http.StatusForbidden, tokenBody: `{"code":"agent_revoked","error":"Agent has been revoked"}`}
+	c, _ := newFakeClient(t, f, "rt_existing")
+
+	err := c.EnsureValidToken("host")
+	if !errors.Is(err, ErrAgentRevoked) || errors.Is(err, ErrPendingApproval) {
+		t.Fatalf("err = %v, want ErrAgentRevoked", err)
+	}
+	if f.enrollCalls != 0 {
+		t.Errorf("enroll called %d times, want 0", f.enrollCalls)
+	}
+}
+
+// Older servers answer 401 for pending agents. Once the agent knows it is
+// pending, a 401 must not trigger a forced re-enrollment every cycle.
+func TestEnsureValidToken_LegacyServer_NoReEnrollLoopWhilePending(t *testing.T) {
+	f := &fakeServer{enrollStatus: "pending", tokenStatus: http.StatusUnauthorized, reportStatus: http.StatusUnauthorized,
+		tokenBody: `{"error":"Invalid or expired refresh token"}`, reportBody: `{"error":"Agent not found or not active"}`}
+	c, _ := newFakeClient(t, f, "")
+
+	// Initial enrollment: pending.
+	if err := c.EnsureValidToken("host"); !errors.Is(err, ErrPendingApproval) {
+		t.Fatalf("first cycle: err = %v, want ErrPendingApproval", err)
+	}
+	// Several later cycles: report rejected, refresh rejected, no re-enroll.
+	for i := 0; i < 3; i++ {
+		if _, err := c.Report(&ReportRequest{Hostname: "host"}); err == nil {
+			t.Fatal("report should fail")
+		}
+		c.InvalidateAccessToken()
+		if err := c.EnsureValidToken("host"); !errors.Is(err, ErrPendingApproval) {
+			t.Fatalf("cycle %d: err = %v, want ErrPendingApproval", i, err)
+		}
+	}
+	if f.enrollCalls != 1 {
+		t.Errorf("enroll called %d times, want 1", f.enrollCalls)
+	}
+}
+
+// After approval the agent leaves the pending state; a later 401 (e.g. an
+// expired refresh token) re-enrolls as before.
+func TestEnsureValidToken_PendingClearedAfterApproval(t *testing.T) {
+	f := &fakeServer{enrollStatus: "pending"}
+	c, _ := newFakeClient(t, f, "")
+	if err := c.EnsureValidToken("host"); !errors.Is(err, ErrPendingApproval) {
+		t.Fatalf("err = %v, want ErrPendingApproval", err)
+	}
+
+	// Approved: refresh succeeds.
+	c.InvalidateAccessToken()
+	if err := c.EnsureValidToken("host"); err != nil {
+		t.Fatalf("after approval: %v", err)
+	}
+
+	// Later the refresh token is rejected: re-enroll.
+	f.tokenStatus, f.enrollStatus = http.StatusUnauthorized, "active"
+	c.InvalidateAccessToken()
+	if err := c.EnsureValidToken("host"); err != nil {
+		t.Fatalf("re-enroll: %v", err)
+	}
+	if f.enrollCalls != 2 {
+		t.Errorf("enroll called %d times, want 2", f.enrollCalls)
+	}
+}
+
+// A 403 agent_pending on the report endpoint also marks the agent pending.
+func TestReport_Pending403_MarksPending(t *testing.T) {
+	f := &fakeServer{reportStatus: http.StatusForbidden, reportBody: `{"code":"agent_pending"}`,
+		tokenStatus: http.StatusUnauthorized}
+	c, _ := newFakeClient(t, f, "rt_existing")
+	c.accessToken, c.accessTokenExp = "at", futureTime()
+
+	if _, err := c.Report(&ReportRequest{Hostname: "host"}); !errors.Is(err, ErrPendingApproval) {
+		t.Fatalf("err = %v, want ErrPendingApproval", err)
+	}
+	c.InvalidateAccessToken()
+	if err := c.EnsureValidToken("host"); !errors.Is(err, ErrPendingApproval) {
+		t.Fatalf("err = %v, want ErrPendingApproval", err)
+	}
+	if f.enrollCalls != 0 {
+		t.Errorf("enroll called %d times, want 0", f.enrollCalls)
+	}
+}
+
+func TestAPIError_IsAndCode(t *testing.T) {
+	msg, code := parseError([]byte(`{"error":"nope","code":"agent_revoked"}`))
+	if msg != "nope" || code != "agent_revoked" {
+		t.Errorf("parseError = %q, %q", msg, code)
+	}
+	if !errors.Is(&APIError{StatusCode: 403, Code: CodeAgentPending}, ErrPendingApproval) {
+		t.Error("403 agent_pending should match ErrPendingApproval")
+	}
+	if errors.Is(&APIError{StatusCode: 401, Code: CodeAgentPending}, ErrPendingApproval) {
+		t.Error("only 403 carries the agent state")
+	}
+	if errors.Is(&APIError{StatusCode: 403}, ErrPendingApproval) || errors.Is(&APIError{StatusCode: 403}, ErrAgentRevoked) {
+		t.Error("403 without code must not match")
+	}
+	wrapped := fmt.Errorf("token refresh: %w", &APIError{StatusCode: 403, Code: CodeAgentRevoked})
+	if !errors.Is(wrapped, ErrAgentRevoked) {
+		t.Error("wrapped error should match ErrAgentRevoked")
+	}
 }

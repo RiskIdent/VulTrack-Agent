@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -130,6 +131,9 @@ func runEnroll(cmd *cobra.Command, args []string) error {
 			if apiErr.StatusCode == 409 {
 				return fmt.Errorf("hostname %q is already registered; use --force to re-enroll", sysInfo.Hostname)
 			}
+		}
+		if errors.Is(err, api.ErrAgentRevoked) {
+			return fmt.Errorf("enrollment refused: this host's registration was revoked by an administrator; it must be removed on the server before the host can enroll again")
 		}
 		return fmt.Errorf("enrollment failed: %w", err)
 	}
@@ -287,7 +291,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 
 	// Send initial report
 	if err := runReportCycle(cfg, client); err != nil {
-		logError("Initial report failed: %v", err)
+		logCycleError("Initial report", err)
 	}
 
 	// Setup ticker
@@ -302,7 +306,7 @@ func runDaemon(cmd *cobra.Command, args []string) error {
 			return nil
 		case <-ticker.C:
 			if err := runReportCycle(cfg, client); err != nil {
-				logError("Report failed: %v", err)
+				logCycleError("Report", err)
 			}
 		}
 	}
@@ -412,6 +416,23 @@ func collectRuntime(cfg *config.Config, packageManager string, useState bool) (j
 	return data, rt.FullModuleIndexHash()
 }
 
+// logCycleError logs why a report cycle did not send a report. Waiting for
+// approval is expected and logged as information, not as an error.
+func logCycleError(what string, err error) {
+	switch {
+	case errors.Is(err, api.ErrPendingApproval):
+		logInfo("%s skipped: agent is pending admin approval; reports start once it is approved", what)
+	case errors.Is(err, api.ErrAgentRevoked):
+		logError("%s skipped: agent registration was revoked by an administrator; the agent will not re-enroll on its own", what)
+	default:
+		if apiErr, ok := err.(*api.APIError); ok && apiErr.StatusCode == 403 {
+			logError("%s failed: access denied by the server (%v)", what, err)
+			return
+		}
+		logError("%s failed: %v", what, err)
+	}
+}
+
 // submitReport sends the report. If the server rejects the access token
 // (e.g. after a backend restart), it forces a real token refresh and retries
 // once. Only after the server accepted the report is the module index state
@@ -426,9 +447,6 @@ func submitReport(cfg *config.Config, client *api.Client, hostname string, repor
 		resp, err = client.Report(report)
 	}
 	if err != nil {
-		if apiErr, ok := err.(*api.APIError); ok && apiErr.StatusCode == 403 {
-			logError("Access denied. Agent may be pending approval or revoked.")
-		}
 		return nil, err
 	}
 	if err := runtimefacts.SaveModuleIndexState(cfg.ModuleIndexStateFile, indexHash); err != nil {
@@ -492,7 +510,14 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	// refresh token (not revoked, not expired) and that the agent is active.
 	// No report is sent: that would overwrite server data and trigger a scan.
 	if err := client.EnsureValidToken(sysInfo.Hostname); err != nil {
-		fmt.Printf("Token Validation:    INVALID (%v)\n", err)
+		switch {
+		case errors.Is(err, api.ErrPendingApproval):
+			fmt.Printf("Token Validation:    PENDING (waiting for admin approval)\n")
+		case errors.Is(err, api.ErrAgentRevoked):
+			fmt.Printf("Token Validation:    REVOKED (registration revoked by an administrator)\n")
+		default:
+			fmt.Printf("Token Validation:    INVALID (%v)\n", err)
+		}
 		return nil
 	}
 

@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -25,6 +26,10 @@ type Client struct {
 	refreshTokenFile string
 	accessToken      string
 	accessTokenExp   time.Time
+	// pending is set while the server reports this registration as waiting
+	// for admin approval. While it is set, a rejected token never leads to
+	// a forced re-enrollment (see EnsureValidToken).
+	pending bool
 }
 
 // EnrollmentRequest is the request body for enrollment
@@ -83,14 +88,51 @@ type ReportResponse struct {
 	ScanJobID    string `json:"scanJobId"`
 }
 
+// Error codes the server sends in the "code" field of a 403 response for an
+// agent whose registration is not active.
+const (
+	CodeAgentPending = "agent_pending"
+	CodeAgentRevoked = "agent_revoked"
+)
+
+var (
+	// ErrPendingApproval means the registration is waiting for admin approval.
+	// The agent keeps its tokens and retries in the next cycle; it never
+	// re-enrolls because of it.
+	ErrPendingApproval = errors.New("agent is pending admin approval")
+	// ErrAgentRevoked means an administrator revoked the registration. The
+	// agent does not re-enroll on its own.
+	ErrAgentRevoked = errors.New("agent registration was revoked by an administrator")
+)
+
 // APIError represents an API error response
 type APIError struct {
 	StatusCode int
 	Message    string
+	// Code is the machine-readable "code" field of the error body, if any.
+	Code string
 }
 
 func (e *APIError) Error() string {
+	if e.Code != "" {
+		return fmt.Sprintf("API error (%d, %s): %s", e.StatusCode, e.Code, e.Message)
+	}
 	return fmt.Sprintf("API error (%d): %s", e.StatusCode, e.Message)
+}
+
+// Is lets errors.Is match a 403 response with a known code against
+// ErrPendingApproval and ErrAgentRevoked.
+func (e *APIError) Is(target error) bool {
+	if e.StatusCode != http.StatusForbidden {
+		return false
+	}
+	switch target {
+	case ErrPendingApproval:
+		return e.Code == CodeAgentPending
+	case ErrAgentRevoked:
+		return e.Code == CodeAgentRevoked
+	}
+	return false
 }
 
 // NewClient creates a new API client
@@ -209,9 +251,13 @@ func (c *Client) Report(report *ReportRequest) (*ReportResponse, error) {
 	var resp *ReportResponse
 	err = c.doRequestWithRetry(req, &resp)
 	if err != nil {
+		if errors.Is(err, ErrPendingApproval) {
+			c.pending = true
+		}
 		return nil, err
 	}
 
+	c.pending = false
 	return resp, nil
 }
 
@@ -227,7 +273,13 @@ func (c *Client) Report(report *ReportRequest) (*ReportResponse, error) {
 //	      └─ access_token absent or expired
 //	          ├─ POST /api/v2/agent/token
 //	          │   ├─ 200 OK  → [C] save new refresh_token, hold new access_token
-//	          │   └─ 401     → [D] Re-enroll with force=true
+//	          │   ├─ 403 agent_pending / agent_revoked
+//	          │   │          → [F] return ErrPendingApproval / ErrAgentRevoked,
+//	          │   │            never re-enroll
+//	          │   └─ 401     → [D] Re-enroll with force=true, unless the agent is
+//	          │                known to be pending approval: older servers answer
+//	          │                401 for pending agents, and re-enrolling would
+//	          │                replace the pending registration every cycle
 //	          └─ network error → [E] return error (caller skips cycle)
 func (c *Client) EnsureValidToken(hostname string) error {
 	// [B] Access token is present and not expired — nothing to do.
@@ -248,7 +300,19 @@ func (c *Client) EnsureValidToken(hostname string) error {
 	// Try to exchange the refresh token for a new access token.
 	refreshResp, err := c.RefreshAccessToken(refreshToken)
 	if err != nil {
+		switch {
+		case errors.Is(err, ErrPendingApproval):
+			// [F] Still waiting for approval — keep the tokens, try again later.
+			c.pending = true
+			return fmt.Errorf("token refresh: %w", err)
+		case errors.Is(err, ErrAgentRevoked):
+			// [F] Revoked by an administrator — do not undo that by re-enrolling.
+			return fmt.Errorf("token refresh: %w", err)
+		}
 		if apiErr, ok := err.(*APIError); ok && apiErr.StatusCode == 401 {
+			if c.pending {
+				return fmt.Errorf("%w: the server rejected the refresh token; not re-enrolling while approval is pending", ErrPendingApproval)
+			}
 			// [D] Refresh token is expired or revoked — re-enroll automatically.
 			return c.doEnroll(hostname, true)
 		}
@@ -257,6 +321,7 @@ func (c *Client) EnsureValidToken(hostname string) error {
 	}
 
 	// [C] Refresh succeeded — persist new refresh token and hold new access token.
+	c.pending = false
 	return c.StoreTokens(refreshResp.AccessToken, refreshResp.ExpiresIn, refreshResp.RefreshToken)
 }
 
@@ -308,8 +373,9 @@ func (c *Client) doEnroll(hostname string, force bool) error {
 		return err
 	}
 
-	if resp.Status == "pending" {
-		return fmt.Errorf("agent enrollment is pending admin approval; reports will be sent once approved")
+	c.pending = resp.Status == "pending"
+	if c.pending {
+		return fmt.Errorf("enrolled, %w; reports will be sent once approved", ErrPendingApproval)
 	}
 
 	return nil
@@ -398,14 +464,15 @@ func (c *Client) doRequestWithRetry(req *http.Request, respBody interface{}) err
 			return nil
 		}
 
-		// Parse error message from response body
-		errorMsg := parseErrorMessage(body)
+		// Parse error message and code from response body
+		errorMsg, errorCode := parseError(body)
 
 		// Never retry client errors (4xx) — the caller must handle them.
 		if resp.StatusCode >= 400 && resp.StatusCode < 500 {
 			return &APIError{
 				StatusCode: resp.StatusCode,
 				Message:    errorMsg,
+				Code:       errorCode,
 			}
 		}
 
@@ -414,6 +481,7 @@ func (c *Client) doRequestWithRetry(req *http.Request, respBody interface{}) err
 			return &APIError{
 				StatusCode: resp.StatusCode,
 				Message:    errorMsg,
+				Code:       errorCode,
 			}
 		}
 	}
@@ -421,15 +489,18 @@ func (c *Client) doRequestWithRetry(req *http.Request, respBody interface{}) err
 	return fmt.Errorf("request failed after %d retries", maxRetries)
 }
 
-func parseErrorMessage(body []byte) string {
+// parseError extracts the message ("message" or "error") and the optional
+// machine-readable "code" from an error response body.
+func parseError(body []byte) (message, code string) {
 	var errorResp map[string]interface{}
 	if err := json.Unmarshal(body, &errorResp); err == nil {
+		code, _ = errorResp["code"].(string)
 		if msg, ok := errorResp["message"].(string); ok {
-			return msg
+			return msg, code
 		}
 		if msg, ok := errorResp["error"].(string); ok {
-			return msg
+			return msg, code
 		}
 	}
-	return string(body)
+	return string(body), code
 }
