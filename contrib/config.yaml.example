@@ -19,10 +19,9 @@ refresh_token_file: /var/lib/vultrack-agent/refresh.token
 # Examples: 30m, 1h, 2h, 24h
 report_interval: 1h
 
-# Log level: debug, info, warn, error (default: info)
+# Log level and log file are validated but not yet used: the agent currently
+# writes all messages to stderr (the journal under systemd).
 log_level: info
-
-# Path to log file (empty = stdout)
 log_file: ""
 
 # Skip TLS certificate verification (default: false)

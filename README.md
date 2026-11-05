@@ -11,12 +11,22 @@ The VulTrack Server can be found in [this repository](https://github.com/RiskIde
 
 - **Static Binary**: No external runtime dependencies, easy deployment
 - **Flexible Configuration**: Config file, environment variables, or command-line flags
-- **Automatic Package Detection**: Supports dpkg (Debian/Ubuntu)
-- **Robust Error Handling**: Retry logic with exponential backoff
+- **Automatic Package Detection**: dpkg (Debian/Ubuntu) and rpm (RHEL/CentOS/Rocky/Alma)
+- **Robust Error Handling**: Retry logic with exponential backoff for network and server errors
 - **Runtime Facts**: Loaded kernel modules, listening sockets, packages in use, services and kernel settings let the server rule out vulnerabilities that cannot affect the host
 - **Automatic Token Refresh**: Short-lived access tokens are refreshed automatically; the agent re-enrolls itself when the refresh token expires
 - **Systemd Integration**: Pre-configured service for easy installation
 - **Ansible Role**: Included Ansible role for automated fleet deployment
+
+### Supported Platforms
+
+| | Status |
+|---|---|
+| Release artifacts | Linux **amd64** only: static binary and `.deb` |
+| Debian / Ubuntu | Supported (`.deb`, binary, Ansible role) |
+| RHEL / CentOS / Rocky / Alma | Package collection works; install the static binary manually (there is no RPM package). Runtime facts that need dpkg are reported as unknown |
+| arm64 | Not released; can be built from source (`ARCH=arm64 ./build.sh binary`) |
+| Ansible role | Ubuntu (focal, jammy, noble), amd64 |
 
 ---
 
@@ -92,7 +102,7 @@ vultrack_agent_config_file: "/etc/vultrack-agent/config.yaml"
   roles:
     - role: vultrack_agent
       vars:
-        vultrack_agent_version: "1.0.0"
+        vultrack_agent_version: "1.2.1"
         vultrack_agent_server_url: "https://vultrack.example.com"
         vultrack_agent_enroll: true
         vultrack_agent_enrollment_key: "{{ lookup('env', 'VULTRACK_ENROLLMENT_KEY') }}"
@@ -107,7 +117,7 @@ vultrack_agent_config_file: "/etc/vultrack-agent/config.yaml"
   roles:
     - role: vultrack_agent
       vars:
-        vultrack_agent_version: "1.0.0"
+        vultrack_agent_version: "1.2.1"
         vultrack_agent_server_url: "https://vultrack.example.com"
 ```
 
@@ -120,14 +130,14 @@ vultrack_agent_config_file: "/etc/vultrack-agent/config.yaml"
   roles:
     - role: vultrack_agent
       vars:
-        vultrack_agent_version: "1.0.0"
+        vultrack_agent_version: "1.2.1"
         vultrack_agent_install_method: "binary"
         vultrack_agent_server_url: "https://vultrack.example.com"
 ```
 
 ### What the Role Does
 
-1. Maps the system architecture (`aarch64` → `arm64`, others → `amd64`)
+1. Selects the release architecture (always `amd64`; no other architecture is released)
 2. Validates required variables (`vultrack_agent_server_url`, and `vultrack_agent_enrollment_key` when enrolling)
 3. Creates the system user and config directory (`/etc/vultrack-agent/`)
 4. Downloads and installs the agent from GitHub Releases (`.deb` or binary)
@@ -175,10 +185,9 @@ refresh_token_file: /var/lib/vultrack-agent/refresh.token
 # Examples: 30m, 1h, 2h, 24h
 report_interval: 1h
 
-# Log level: debug, info, warn, error (default: info)
+# Log level and log file are validated but not yet used: the agent
+# currently writes all messages to stderr (the journal under systemd).
 log_level: info
-
-# Path to log file (empty = stdout/journald)
 log_file: ""
 
 # Skip TLS certificate verification — only use for testing!
@@ -208,8 +217,8 @@ An annotated example is available at `contrib/config.yaml.example`.
 | `VULTRACK_ENROLLMENT_KEY` | Enrollment key (keep permanently) |
 | `VULTRACK_REFRESH_TOKEN_FILE` | Path to refresh token file |
 | `VULTRACK_REPORT_INTERVAL` | Report interval (e.g. `1h`, `30m`) |
-| `VULTRACK_LOG_LEVEL` | Log level (`debug`, `info`, `warn`, `error`) |
-| `VULTRACK_LOG_FILE` | Path to log file |
+| `VULTRACK_LOG_LEVEL` | Log level (`debug`, `info`, `warn`, `error`); validated, not yet used |
+| `VULTRACK_LOG_FILE` | Path to log file; not yet used |
 | `VULTRACK_INSECURE` | Skip TLS verification (`true`/`false`) |
 | `VULTRACK_CA_CERT` | Path to custom CA certificate |
 | `VULTRACK_COLLECT_RUNTIME` | Collect runtime facts (`true`/`false`) |
@@ -223,16 +232,31 @@ An annotated example is available at `contrib/config.yaml.example`.
 |---|---|
 | `--config` | Path to config file |
 | `--server-url` | VulTrack server URL |
-| `--enrollment-key` | Enrollment key |
 | `--refresh-token-file` | Path to refresh token file |
-| `--log-level` | Log level |
-| `--log-file` | Path to log file |
+| `--log-level` | Log level; validated, not yet used |
+| `--log-file` | Path to log file; not yet used |
 | `--insecure` | Skip TLS verification |
 | `--ca-cert` | Path to custom CA certificate |
+
+These flags work with every command. Command-specific flags:
+
+| Command | Flag | Description |
+|---|---|---|
+| `enroll` | `--enrollment-key` | Enrollment key (otherwise `enrollment_key` from config/env) |
+| `enroll` | `--force` | Revoke an existing registration and enroll again |
+| `export` | `-o`, `--output` | Write the JSON to a file instead of stdout |
+
+There are no flags for `report_interval` and the runtime settings; use the
+config file or environment variables.
 
 ---
 
 ## Usage
+
+> **Run `enroll`, `report` and `status` as the service user** (`sudo -u
+> vultrack-agent …`). These commands write the refresh token; run as root, the
+> token file ends up owned by root and the service (user `vultrack-agent`) can
+> no longer read it. `export` does not touch the token and can run as root.
 
 ### Enroll Agent
 
@@ -240,7 +264,7 @@ Register the agent with the VulTrack server. Requires an enrollment key
 obtained from the VulTrack web UI.
 
 ```bash
-sudo vultrack-agent enroll --enrollment-key YOUR_ENROLLMENT_KEY
+sudo -u vultrack-agent vultrack-agent enroll --enrollment-key YOUR_ENROLLMENT_KEY
 ```
 
 On success, the refresh token is saved to `refresh_token_file`. The access
@@ -249,14 +273,18 @@ token is held in memory only.
 To force re-enrollment (revokes the existing registration):
 
 ```bash
-sudo vultrack-agent enroll --enrollment-key YOUR_ENROLLMENT_KEY --force
+sudo -u vultrack-agent vultrack-agent enroll --enrollment-key YOUR_ENROLLMENT_KEY --force
 ```
 
 ### One-Time Report
 
 ```bash
-sudo vultrack-agent report
+sudo -u vultrack-agent vultrack-agent report
 ```
+
+Runtime facts that need other processes' `/proc` entries (`listeners`,
+`packagesInUse`) are reported as `insufficient privileges` here, because the
+capabilities are only granted to the systemd service.
 
 ### Daemon Mode
 
@@ -264,8 +292,8 @@ sudo vultrack-agent report
 # Recommended: run as a systemd service
 sudo systemctl start vultrack-agent
 
-# Or run manually in the foreground
-sudo vultrack-agent daemon
+# Or run manually in the foreground (as the service user)
+sudo -u vultrack-agent vultrack-agent daemon
 ```
 
 The daemon handles `SIGINT` and `SIGTERM` for graceful shutdown and sends an
@@ -289,12 +317,16 @@ file exists, the default runtime settings are used.
 
 ### Check Status
 
-Display the active configuration, token state, and validate the token against
-the server:
+Display the active configuration and validate the agent's registration
+against the server. The check exchanges the refresh token for a new one (the
+server rotates it on every use), so run it as the service user:
 
 ```bash
-sudo vultrack-agent status
+sudo -u vultrack-agent vultrack-agent status
 ```
+
+`status` sends no report. If the server rejects the refresh token, the agent
+re-enrolls with `enrollment_key`, exactly as the daemon would.
 
 ---
 
@@ -483,7 +515,7 @@ fully autonomous recovery without manual intervention.
 
 | Condition | Behavior |
 |---|---|
-| Network error | Retry up to 3 times with exponential backoff (1s, 2s, 4s) |
+| Network error or `5xx` | Retry up to 3 times with exponential backoff (1s, 2s, 4s) |
 | `401` on report | Refresh access token and retry once |
 | `401` on token refresh | Re-enroll with `force=true` using `enrollment_key` |
 | `401` on enrollment | Enrollment key invalid — log error and exit |
@@ -500,7 +532,7 @@ fully autonomous recovery without manual intervention.
 - Token writes use an atomic write-then-rename pattern to prevent corruption
 - TLS certificate validation is enforced by default
 - Custom CA certificates can be provided for internal PKI environments
-- Tokens and enrollment keys are never fully written to logs (only first 8 characters)
+- Tokens and enrollment keys are never written to logs; `status` shows only the first 8 characters of the enrollment key
 - Ansible tasks use `no_log: true` for steps that handle secrets
 - The service runs as the unprivileged `vultrack-agent` user with only
   `CAP_DAC_READ_SEARCH` and `CAP_SYS_PTRACE` (for runtime facts); the
@@ -563,7 +595,7 @@ vultrack-agent/
 │   └── workflows/
 │       ├── release.yml          # Automated release workflow
 │       └── zizmor.yml           # GitHub Actions security scanning
-├── build.sh                     # Multi-arch build script
+├── build.sh                     # Build script (binary, Debian package; ARCH=amd64 by default)
 ├── INSTALL.md                   # Manual installation options
 └── README.md
 ```

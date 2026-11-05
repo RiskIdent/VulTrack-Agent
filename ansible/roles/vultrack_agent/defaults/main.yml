@@ -18,6 +18,7 @@ vultrack_agent_enrollment_key: ""
 # Agent configuration
 vultrack_agent_refresh_token_file: "/var/lib/vultrack-agent/refresh.token"
 vultrack_agent_report_interval: "1h"
+# log_level/log_file are validated by the agent but not yet used (logs go to the journal)
 vultrack_agent_log_level: "info"
 vultrack_agent_log_file: ""
 vultrack_agent_insecure: false
