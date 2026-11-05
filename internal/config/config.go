@@ -12,7 +12,7 @@ import (
 
 // Config holds all configuration for the agent
 type Config struct {
-	ServerURL        string        `yaml:"server_url" env:"VULTRACK_SERVER_URL"`
+	ServerURL string `yaml:"server_url" env:"VULTRACK_SERVER_URL"`
 	// EnrollmentKey is required for enrollment and automatic re-enrollment.
 	// Keep this value permanently in the config — it is needed to re-enroll
 	// when the refresh token expires or is revoked.

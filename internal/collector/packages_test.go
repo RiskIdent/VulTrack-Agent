@@ -7,9 +7,9 @@ import (
 
 func TestParseDPKGOutput(t *testing.T) {
 	tests := []struct {
-		name   string
-		input  string
-		want   []Package
+		name  string
+		input string
+		want  []Package
 	}{
 		{
 			name:  "empty output",
