@@ -377,6 +377,80 @@ when the server has not yet accepted it, or once every 24 hours; otherwise only
 its hash is sent. The hash of the accepted index is stored in
 `module_index_state_file`, the only file runtime collection writes.
 
+**Example.** Abbreviated `runtime` object from an Ubuntu 24.04 VM running
+Docker (agent 1.2.1; container names and IDs anonymised, most list entries
+removed). The module index is shown in its hash-only form, as sent when the
+server already has it:
+
+```json
+{
+  "schemaVersion": 1,
+  "collectedAt": "2026-11-05T11:48:58Z",
+  "kernel": {
+    "release": "6.8.0-147-generic",
+    "modulesDisabled": false,
+    "loadedModules": [
+      {"name": "nf_tables", "path": "kernel/net/netfilter/nf_tables.ko.zst"},
+      {"name": "overlay", "path": "kernel/fs/overlayfs/overlay.ko.zst"},
+      {"name": "tls", "path": "kernel/net/tls/tls.ko.zst"}
+    ],
+    "blacklistedModules": [
+      {"name": "algif_aead", "installCommand": "/bin/false"},
+      {"name": "pcspkr"}
+    ],
+    "moduleIndex": {"hash": "sha256:a950e3bc590c79f416d2cd92bca51a48c8adec323ad49d585f22dc69411ff160"},
+    "sysctls": {
+      "kernel.apparmor_restrict_unprivileged_userns": "1",
+      "kernel.dmesg_restrict": "1",
+      "kernel.kptr_restrict": "1",
+      "kernel.modules_disabled": "0",
+      "kernel.perf_event_paranoid": "4",
+      "kernel.unprivileged_bpf_disabled": "2",
+      "kernel.unprivileged_userns_clone": "1",
+      "kernel.yama.ptrace_scope": "1",
+      "user.max_user_namespaces": "47691"
+    },
+    "installedKernels": ["6.8.0-137-generic", "6.8.0-147-generic"],
+    "rebootRequired": false
+  },
+  "listeners": [
+    {"protocol": "tcp", "address": "0.0.0.0", "port": 22, "process": "sshd", "exe": "/usr/sbin/sshd",
+     "package": "openssh-server", "unit": "ssh.service", "hostNetns": true},
+    {"protocol": "tcp", "address": "0.0.0.0", "port": 8080, "process": "docker-proxy", "exe": "/usr/bin/docker-proxy",
+     "package": "docker-ce", "unit": "docker.service", "hostNetns": true},
+    {"protocol": "tcp", "address": "127.0.0.53", "port": 53, "process": "systemd-resolve", "exe": "/usr/lib/systemd/systemd-resolved",
+     "package": "systemd-resolved", "unit": "systemd-resolved.service", "hostNetns": true},
+    {"protocol": "tcp6", "address": "::", "port": 443, "process": "caddy", "exe": "/usr/bin/caddy",
+     "unit": "docker-4d88e05acf61.scope", "hostNetns": true},
+    {"protocol": "tcp6", "address": "::", "port": 8080, "process": "app", "exe": "/app/app",
+     "unit": "docker-20984cf3b843.scope", "hostNetns": false},
+    {"protocol": "udp", "address": "0.0.0.0", "port": 123, "process": "chronyd", "exe": "/usr/sbin/chronyd",
+     "package": "chrony", "unit": "chrony.service", "hostNetns": true}
+  ],
+  "packagesInUse": [
+    {"package": "docker-ce", "processes": ["docker-proxy", "dockerd"]},
+    {"package": "libssl3t64", "processes": ["clamd", "freshclam", "fwupd", "sshd", "sudo", "systemd", "systemd-resolve"]},
+    {"package": "openssh-server", "processes": ["sshd"]}
+  ],
+  "services": [
+    {"unit": "docker.service", "activeState": "active", "subState": "running", "unitFileState": "enabled", "package": "docker-ce"},
+    {"unit": "node_exporter.service", "activeState": "active", "subState": "running", "unitFileState": "enabled"},
+    {"unit": "ssh.service", "activeState": "active", "subState": "running", "unitFileState": "enabled", "package": "openssh-server"}
+  ],
+  "virtualization": "kvm",
+  "truncated": ["packagesInUse"]
+}
+```
+
+What the example shows:
+
+- `sshd` owns port 22 although `ssh.socket` (PID 1) holds the socket as well.
+- `caddy` runs in a container with host networking (`hostNetns: true`), `app`
+  in its own network namespace; neither gets a host package.
+- `node_exporter` was installed outside dpkg, so it has no `package`.
+- `truncated` lists `packagesInUse` because `libc6` is used by more than 20
+  distinct processes on this host.
+
 **Disabling.** Set `collect_runtime: false` (or `VULTRACK_COLLECT_RUNTIME=false`)
 to omit the runtime facts entirely, or list only the wanted collectors in
 `runtime_collectors`. The server then treats the missing facts as unknown and
