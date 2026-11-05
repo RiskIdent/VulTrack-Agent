@@ -23,6 +23,18 @@ vultrack_agent_log_file: ""
 vultrack_agent_insecure: false
 vultrack_agent_ca_cert: ""
 
+# Runtime facts (loaded kernel modules, listening sockets, packages in use,
+# services, virtualization). See the README section "Runtime Facts".
+vultrack_agent_collect_runtime: true
+vultrack_agent_runtime_collectors:
+  - kernel
+  - listeners
+  - packages_in_use
+  - services
+  - virtualization
+vultrack_agent_runtime_timeout_seconds: 20
+vultrack_agent_module_index_state_file: "/var/lib/vultrack-agent/module-index.sha256"
+
 # Systemd service management
 vultrack_agent_service_state: "started"
 vultrack_agent_service_enabled: true

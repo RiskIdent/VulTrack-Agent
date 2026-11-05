@@ -31,3 +31,28 @@ insecure: false
 
 # Path to custom CA certificate file (optional)
 # ca_cert: /etc/ssl/certs/custom-ca.crt
+
+# --- Runtime facts -----------------------------------------------------------
+# The agent adds runtime facts to every report: loaded kernel modules, listening
+# sockets, packages in use by running processes, systemd services and a few
+# kernel settings. The server uses them to rule out vulnerabilities that cannot
+# affect this host. See the README section "Runtime Facts".
+
+# Master switch (default: true). false omits the runtime facts entirely.
+collect_runtime: true
+
+# Which collectors run (default: all). A collector that is not listed is
+# reported as unknown, not as empty.
+runtime_collectors:
+  - kernel
+  - listeners
+  - packages_in_use
+  - services
+  - virtualization
+
+# Overall time budget for all collectors in seconds (default: 20)
+runtime_timeout_seconds: 20
+
+# Hash of the last kernel module index the server accepted. The full index
+# (several thousand lines) is only sent when it changed or once a day.
+module_index_state_file: /var/lib/vultrack-agent/module-index.sha256

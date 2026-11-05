@@ -28,3 +28,12 @@ insecure: {{ vultrack_agent_insecure | bool | lower }}
 # Path to custom CA certificate file
 ca_cert: "{{ vultrack_agent_ca_cert }}"
 {% endif %}
+
+# Runtime facts: master switch, collectors, time budget, module index state
+collect_runtime: {{ vultrack_agent_collect_runtime | bool | lower }}
+runtime_collectors:
+{% for collector in vultrack_agent_runtime_collectors %}
+  - {{ collector }}
+{% endfor %}
+runtime_timeout_seconds: {{ vultrack_agent_runtime_timeout_seconds | int }}
+module_index_state_file: "{{ vultrack_agent_module_index_state_file }}"

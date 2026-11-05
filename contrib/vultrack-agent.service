@@ -19,14 +19,21 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/etc/vultrack-agent /var/lib/vultrack-agent
-CapabilityBoundingSet=
-AmbientCapabilities=
-RestrictAddressFamilies=AF_INET AF_INET6 AF_NETLINK
+# Runtime facts: CAP_DAC_READ_SEARCH and CAP_SYS_PTRACE let the agent read
+# other processes' /proc entries (fd, maps, exe, ns) for the listeners and
+# packagesInUse collectors. Without them both are reported as "insufficient
+# privileges". The syscalls that would turn CAP_SYS_PTRACE into access to
+# other processes' memory are blocked below.
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_SYS_PTRACE
+AmbientCapabilities=CAP_DAC_READ_SEARCH CAP_SYS_PTRACE
+# AF_UNIX is needed by systemctl (services collector).
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 LockPersonality=true
 MemoryDenyWriteExecute=true
 RestrictRealtime=true
 RestrictSUIDSGID=true
 SystemCallFilter=@system-service
+SystemCallFilter=~ptrace process_vm_readv process_vm_writev pidfd_getfd
 SystemCallErrorNumber=EPERM
 
 [Install]

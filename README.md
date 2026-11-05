@@ -13,6 +13,7 @@ The VulTrack Server can be found in [this repository](https://github.com/RiskIde
 - **Flexible Configuration**: Config file, environment variables, or command-line flags
 - **Automatic Package Detection**: Supports dpkg (Debian/Ubuntu)
 - **Robust Error Handling**: Retry logic with exponential backoff
+- **Runtime Facts**: Loaded kernel modules, listening sockets, packages in use, services and kernel settings let the server rule out vulnerabilities that cannot affect the host
 - **Automatic Token Refresh**: Short-lived access tokens are refreshed automatically; the agent re-enrolls itself when the refresh token expires
 - **Systemd Integration**: Pre-configured service for easy installation
 - **Ansible Role**: Included Ansible role for automated fleet deployment
@@ -59,6 +60,12 @@ vultrack_agent_log_level: "info"
 vultrack_agent_log_file: ""
 vultrack_agent_insecure: false
 vultrack_agent_ca_cert: ""
+
+# Runtime facts (see "Runtime Facts" below)
+vultrack_agent_collect_runtime: true
+vultrack_agent_runtime_collectors: [kernel, listeners, packages_in_use, services, virtualization]
+vultrack_agent_runtime_timeout_seconds: 20
+vultrack_agent_module_index_state_file: "/var/lib/vultrack-agent/module-index.sha256"
 
 # Systemd service management
 vultrack_agent_service_state: "started"
@@ -179,6 +186,16 @@ insecure: false
 
 # Path to a custom CA certificate in PEM format (optional)
 ca_cert: ""
+
+# Runtime facts (see "Runtime Facts")
+# Master switch; false omits the runtime facts entirely (default: true)
+collect_runtime: true
+# Collectors to run (default: all)
+runtime_collectors: [kernel, listeners, packages_in_use, services, virtualization]
+# Overall time budget for all collectors in seconds (default: 20)
+runtime_timeout_seconds: 20
+# Hash of the last kernel module index the server accepted
+module_index_state_file: /var/lib/vultrack-agent/module-index.sha256
 ```
 
 An annotated example is available at `contrib/config.yaml.example`.
@@ -195,6 +212,10 @@ An annotated example is available at `contrib/config.yaml.example`.
 | `VULTRACK_LOG_FILE` | Path to log file |
 | `VULTRACK_INSECURE` | Skip TLS verification (`true`/`false`) |
 | `VULTRACK_CA_CERT` | Path to custom CA certificate |
+| `VULTRACK_COLLECT_RUNTIME` | Collect runtime facts (`true`/`false`) |
+| `VULTRACK_RUNTIME_COLLECTORS` | Comma-separated list of collectors (e.g. `kernel,services`) |
+| `VULTRACK_RUNTIME_TIMEOUT_SECONDS` | Time budget for all collectors in seconds |
+| `VULTRACK_MODULE_INDEX_STATE_FILE` | Path to the module index state file |
 
 ### Command-Line Flags
 
@@ -259,7 +280,12 @@ the server. Useful for debugging or offline inspection:
 ```bash
 sudo vultrack-agent export -o report.json
 sudo vultrack-agent export | jq .
+sudo vultrack-agent export | jq .runtime
 ```
+
+The export contains the runtime facts (always with the full kernel module
+index) and does not touch the module index state file. If no usable config
+file exists, the default runtime settings are used.
 
 ### Check Status
 
@@ -300,6 +326,56 @@ For each installed package:
 
 Packages are collected via `dpkg-query` on Debian/Ubuntu systems and
 `rpm -qa` on RHEL/CentOS/Rocky/Alma systems.
+
+### Runtime Facts
+
+Every report also carries an optional `runtime` object. The server uses it to
+decide automatically whether a vulnerability can affect the host, for example
+"this kernel CVE is in a module that is not loaded and cannot be loaded" or
+"this daemon only listens on 127.0.0.1".
+
+| Collector (`runtime_collectors`) | Field | Content | Source |
+|---|---|---|---|
+| `kernel` | `kernel` | Kernel release, `modulesDisabled`, loaded modules (with path), modules blacklisted or disabled in `modprobe.d`, the kernel module index, selected sysctls, installed kernels, reboot required | `/proc`, `/lib/modules/<release>`, `modprobe.d`, `/var/lib/dpkg/status`, `/var/run/reboot-required*` |
+| `listeners` | `listeners` | Listening TCP and bound UDP sockets, also inside containers, with process name, executable, package and systemd unit | `/proc/net/*`, `/proc/<pid>/{fd,comm,exe,cgroup,ns/net}` |
+| `packages_in_use` | `packagesInUse` | Packages whose files are mapped by running processes, and processes still running a replaced (upgraded) file | `/proc/<pid>/{maps,exe,comm}` |
+| `services` | `services` | All systemd service units with active, sub and unit file state and package | `systemctl list-units`, `systemctl show` |
+| `virtualization` | `virtualization` | Virtualization or container type | `systemd-detect-virt` |
+
+Packages are resolved with the dpkg file lists (`/var/lib/dpkg/info/*.list`),
+including merged `/usr` and dpkg diversions. On non-dpkg systems the package
+fields, `installedKernels`, `rebootRequired` and `packagesInUse` are omitted.
+
+**Unknown is not empty.** A collector that cannot run (missing permission,
+missing tool, error, timeout) is omitted and the reason is listed in
+`runtime.errors`. An empty list means "collected, nothing found". Values that
+cannot be determined exactly (e.g. the package of a file) are left out instead
+of guessed. Collection problems never prevent the report from being sent.
+
+**Not collected:** command lines, environment variables, working directories,
+open files other than mapped executables and libraries, user names or UIDs of
+processes, and the contents of configuration files other than the `blacklist`
+and `install` directives in `modprobe.d`.
+
+**Privileges.** `listeners` and `packages_in_use` need to read other
+processes' `/proc` entries. The agent checks for `CAP_DAC_READ_SEARCH` and
+`CAP_SYS_PTRACE` (root has both; the systemd unit grants them to the service
+user). Without them both collectors are reported as `insufficient privileges`,
+because partial data would look complete.
+
+**Size and performance.** All collectors share the time budget
+`runtime_timeout_seconds`. Lists are capped (2,000 listeners, 3,000 packages
+in use, 2,000 services, 20 processes per package); a capped category is listed
+in `runtime.truncated`. The `runtime` object stays below 1 MB. The kernel
+module index (several thousand lines) is sent in full only when it changed,
+when the server has not yet accepted it, or once every 24 hours; otherwise only
+its hash is sent. The hash of the accepted index is stored in
+`module_index_state_file`, the only file runtime collection writes.
+
+**Disabling.** Set `collect_runtime: false` (or `VULTRACK_COLLECT_RUNTIME=false`)
+to omit the runtime facts entirely, or list only the wanted collectors in
+`runtime_collectors`. The server then treats the missing facts as unknown and
+never dismisses a finding based on them.
 
 ---
 
@@ -347,6 +423,11 @@ fully autonomous recovery without manual intervention.
 - Custom CA certificates can be provided for internal PKI environments
 - Tokens and enrollment keys are never fully written to logs (only first 8 characters)
 - Ansible tasks use `no_log: true` for steps that handle secrets
+- The service runs as the unprivileged `vultrack-agent` user with only
+  `CAP_DAC_READ_SEARCH` and `CAP_SYS_PTRACE` (for runtime facts); the
+  syscalls `ptrace`, `process_vm_readv`, `process_vm_writev` and
+  `pidfd_getfd` are blocked, so the capabilities cannot be used to access
+  other processes' memory
 
 ---
 
@@ -357,7 +438,9 @@ provides:
 
 - Automatic restart on failure
 - Network dependency (`network-online.target`)
-- Security hardening (`NoNewPrivileges`, `PrivateTmp`, etc.)
+- Security hardening (`NoNewPrivileges`, `PrivateTmp`, syscall filter, etc.)
+- The capabilities needed for runtime facts (`CAP_DAC_READ_SEARCH`,
+  `CAP_SYS_PTRACE`) and `AF_UNIX` for `systemctl`
 - Logging to the systemd journal
 
 ### Viewing Logs
@@ -385,6 +468,9 @@ vultrack-agent/
 │   ├── collector/
 │   │   ├── system.go            # System information collection
 │   │   └── packages.go          # Package enumeration (dpkg/rpm)
+│   ├── runtimefacts/            # Runtime facts (kernel, listeners, packages
+│   │   │                        #   in use, services, virtualization)
+│   │   └── testdata/            # Fixture root filesystem and golden file
 │   └── config/
 │       └── config.go            # Configuration loading and validation
 ├── ansible/
