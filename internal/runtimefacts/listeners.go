@@ -103,7 +103,9 @@ func collectListeners(ctx context.Context, e *env) collectorResult {
 		exe, err2 := readExe(e, pid)
 		if err1 == nil && err2 == nil {
 			p = procInfo{comm: comm, exe: exe, ok: true}
-			if idx != nil {
+			// Paths of processes with another root (containers) are not
+			// paths of the host, so the host's dpkg cannot tell their package.
+			if idx != nil && e.hostRoot(pid) {
 				p.pkg, _ = idx.Lookup(strings.TrimSuffix(exe, " (deleted)"))
 			}
 			if cg, err := os.ReadFile(procPath(e, pid, "cgroup")); err == nil {
@@ -193,7 +195,10 @@ next:
 }
 
 // scanSocketFDs records the socket inodes held by pid in owner, keeping the
-// lowest PID per inode (pids are scanned in ascending order).
+// lowest PID per inode (pids are scanned in ascending order). PID 1 is only
+// kept when no other process holds the socket: with socket activation systemd
+// holds the listening socket, but the service that inherited it (e.g. sshd
+// for ssh.socket) is the one actually serving the port.
 func scanSocketFDs(e *env, pid int, owner map[uint64]int) error {
 	dir := procPath(e, pid, "fd")
 	entries, err := os.ReadDir(dir)
@@ -222,7 +227,7 @@ func scanSocketFDs(e *env, pid int, owner map[uint64]int) error {
 		if err != nil {
 			continue
 		}
-		if _, ok := owner[inode]; !ok {
+		if cur, ok := owner[inode]; !ok || (cur == 1 && pid != 1) {
 			owner[inode] = pid
 		}
 	}

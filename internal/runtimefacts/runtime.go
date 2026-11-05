@@ -148,6 +148,10 @@ type env struct {
 	dpkgOnce sync.Once
 	dpkg     *dpkgIndex
 	dpkgErr  error
+
+	rootOnce sync.Once
+	rootID   fileID
+	rootOK   bool
 }
 
 // path returns the absolute path of p (an absolute path on the target

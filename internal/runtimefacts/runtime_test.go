@@ -169,6 +169,7 @@ func TestParseProcNet(t *testing.T) {
 		{"tcp", "0.0.0.0", 22, 1001},
 		{"tcp", "0.0.0.0", 80, 2001},
 		{"tcp", "127.0.0.53", 53, 4002},
+		{"tcp", "0.0.0.0", 111, 6001},
 	}
 	if !reflect.DeepEqual(socks, want) {
 		t.Errorf("tcp: got %+v, want %+v (established connections must be skipped)", socks, want)
@@ -345,7 +346,7 @@ func TestDpkgIndex(t *testing.T) {
 		{"/usr/bin/foo", "bar"},                                         // diverted path, diverter lists it
 		{"/usr/bin/foo.distrib", "foo"},                                 // diversion target
 		{"/usr/sbin/local", ""},                                         // local diversion
-		{"/usr/bin/python3.12", ""},                                     // not owned
+		{"/usr/bin/python3.12", "python3.12"},                           // owned on the host
 		{"/usr/share/../sbin/nginx", "nginx-core"},                      // cleaned
 		{"relative/path", ""},                                           // not absolute
 		{"/usr/lib/x86_64-linux-gnu/libssl.so.3", "libssl3t64"},         // :arch suffix removed
@@ -772,4 +773,47 @@ func mustWrite(t *testing.T, path, content string) {
 func sha256Hex(s string) string {
 	sum := sha256.Sum256([]byte(s))
 	return hex.EncodeToString(sum[:])
+}
+
+// With socket activation PID 1 holds the listening socket too; the service
+// that inherited it must be reported, PID 1 only when nobody else holds it.
+func TestSocketActivationOwner(t *testing.T) {
+	r := Collect(context.Background(), fixtureOptions(t))
+	got := map[int]string{}
+	for _, l := range *r.Listeners {
+		if l.Protocol == "tcp" && l.Address == "0.0.0.0" {
+			got[l.Port] = l.Process + "/" + l.Package
+		}
+	}
+	if got[22] != "sshd/openssh-server" {
+		t.Errorf("port 22: got %q, want sshd/openssh-server", got[22])
+	}
+	if got[111] != "systemd/systemd" {
+		t.Errorf("port 111: got %q, want systemd/systemd", got[111])
+	}
+}
+
+// Processes with another root (containers) see their own filesystem; their
+// paths must not be resolved against the host's dpkg database.
+func TestContainerPathsNotResolved(t *testing.T) {
+	r := Collect(context.Background(), fixtureOptions(t))
+	for _, l := range *r.Listeners {
+		if l.Process == "python3" && l.Package != "" {
+			t.Errorf("container listener got host package %q", l.Package)
+		}
+	}
+	for _, p := range *r.PackagesInUse {
+		if p.Package == "python3.12" {
+			t.Error("host package python3.12 attributed to a container process")
+		}
+		for _, proc := range p.Processes {
+			if proc == "python3" {
+				t.Errorf("container process listed for host package %s", p.Package)
+			}
+		}
+	}
+	e := fixtureEnv(t)
+	if !e.hostRoot(100) || e.hostRoot(300) || e.hostRoot(99999) {
+		t.Error("hostRoot: want true for pid 100, false for the container and unknown pids")
+	}
 }

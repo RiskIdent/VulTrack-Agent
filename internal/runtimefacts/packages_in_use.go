@@ -57,6 +57,11 @@ func collectPackagesInUse(ctx context.Context, e *env) collectorResult {
 		if len(files) == 0 {
 			continue // kernel thread (or a process that just exited)
 		}
+		// A process with another root (a container) maps files of its own
+		// filesystem; resolving them against the host's dpkg would be a guess.
+		if !e.hostRoot(pid) {
+			continue
+		}
 		exe, err := readExe(e, pid)
 		if err != nil && !processGone(err) {
 			return errResult(categoryPackagesInUse, fmt.Sprintf("pid %d: %v", pid, err))

@@ -345,6 +345,11 @@ decide automatically whether a vulnerability can affect the host, for example
 Packages are resolved with the dpkg file lists (`/var/lib/dpkg/info/*.list`),
 including merged `/usr` and dpkg diversions. On non-dpkg systems the package
 fields, `installedKernels`, `rebootRequired` and `packagesInUse` are omitted.
+Processes with their own root filesystem (containers) are reported with
+process, executable and unit, but never with a host package, and they do not
+count in `packagesInUse`: their paths belong to the container image, not to the
+host's dpkg database. With socket activation (e.g. `ssh.socket`) the listener
+is attributed to the service that inherited the socket, not to systemd.
 
 **Unknown is not empty.** A collector that cannot run (missing permission,
 missing tool, error, timeout) is omitted and the reason is listed in

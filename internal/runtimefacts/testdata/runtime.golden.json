@@ -103,6 +103,16 @@
     {
       "protocol": "tcp",
       "address": "0.0.0.0",
+      "port": 111,
+      "process": "systemd",
+      "exe": "/usr/lib/systemd/systemd",
+      "package": "systemd",
+      "unit": "init.scope",
+      "hostNetns": true
+    },
+    {
+      "protocol": "tcp",
+      "address": "0.0.0.0",
       "port": 8080,
       "process": "python3",
       "exe": "/usr/bin/python3.12",
@@ -177,7 +187,6 @@
       "processes": [
         "dhclient",
         "nginx",
-        "python3",
         "sshd",
         "systemd",
         "systemd-resolve"

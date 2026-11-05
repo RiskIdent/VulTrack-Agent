@@ -129,3 +129,33 @@ func errResult(category, msg string) collectorResult {
 func timeoutResult(category string, ctx context.Context) collectorResult {
 	return errResult(category, "timeout: "+ctx.Err().Error())
 }
+
+// fileID identifies a file by device and inode.
+type fileID struct{ dev, ino uint64 }
+
+func statID(path string) (fileID, bool) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return fileID{}, false
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok {
+		return fileID{}, false
+	}
+	return fileID{dev: uint64(st.Dev), ino: st.Ino}, true
+}
+
+// hostRoot reports whether pid has the same root directory as PID 1, i.e.
+// its file paths are paths of the host. Container processes have their own
+// root; systemd services with a private mount namespace (ProtectSystem=,
+// PrivateTmp=) keep the host root. Unknown counts as "not the host root".
+func (e *env) hostRoot(pid int) bool {
+	e.rootOnce.Do(func() {
+		e.rootID, e.rootOK = statID(procPath(e, 1, "root"))
+	})
+	if !e.rootOK {
+		return false
+	}
+	id, ok := statID(procPath(e, pid, "root"))
+	return ok && id == e.rootID
+}
